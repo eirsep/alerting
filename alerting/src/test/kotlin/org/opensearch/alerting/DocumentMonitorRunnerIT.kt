@@ -82,7 +82,7 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         val trigger = randomDocumentLevelTrigger(condition = ALWAYS_RUN)
         val monitor = randomDocumentLevelMonitor(inputs = listOf(docLevelInput), triggers = listOf(trigger))
 
-        indexDoc(testIndex, "1", testDoc)
+        indexDoc(testIndex, "2", testDoc)
         indexDoc(testIndex, "5", testDoc)
 
         val response = executeMonitor(monitor, params = DRYRUN_MONITOR)
@@ -113,6 +113,7 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val trigger = randomDocumentLevelTrigger(condition = ALWAYS_RUN)
         val monitor = createMonitor(randomDocumentLevelMonitor(inputs = listOf(docLevelInput), triggers = listOf(trigger)))
+        logger.error("[TESTCTX] Monitor looks like: $monitor")
         assertNotNull(monitor.id)
 
         indexDoc(testIndex, "1", testDoc)
