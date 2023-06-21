@@ -81,6 +81,7 @@ import org.opensearch.common.settings.SettingsFilter
 import org.opensearch.commons.alerting.action.AlertingActions
 import org.opensearch.commons.alerting.aggregation.bucketselectorext.BucketSelectorExtAggregationBuilder
 import org.opensearch.commons.alerting.model.BucketLevelTrigger
+import org.opensearch.commons.alerting.model.ChainedAlertTrigger
 import org.opensearch.commons.alerting.model.ClusterMetricsInput
 import org.opensearch.commons.alerting.model.DocLevelMonitorInput
 import org.opensearch.commons.alerting.model.DocumentLevelTrigger
@@ -168,6 +169,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             RestSearchMonitorAction(settings, clusterService),
             RestExecuteMonitorAction(),
             RestAcknowledgeAlertAction(),
+//            RestAcknowledgeChainedAlertAction(),
             RestScheduledJobStatsHandler("_alerting"),
             RestSearchEmailAccountAction(),
             RestGetEmailAccountAction(),
@@ -213,6 +215,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             BucketLevelTrigger.XCONTENT_REGISTRY,
             ClusterMetricsInput.XCONTENT_REGISTRY,
             DocumentLevelTrigger.XCONTENT_REGISTRY,
+            ChainedAlertTrigger.XCONTENT_REGISTRY,
             Workflow.XCONTENT_REGISTRY
         )
     }

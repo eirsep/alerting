@@ -29,7 +29,7 @@ private val log: Logger = LogManager.getLogger(RestAcknowledgeAlertAction::class
 /**
  * This class consists of the REST handler to acknowledge alerts.
  * The user provides the monitorID to which these alerts pertain and in the content of the request provides
- * the ids to the alerts he would like to acknowledge.
+ * the ids to the alerts user would like to acknowledge.
  */
 class RestAcknowledgeAlertAction : BaseRestHandler() {
 

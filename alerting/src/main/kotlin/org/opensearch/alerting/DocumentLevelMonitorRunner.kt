@@ -350,7 +350,19 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                 listOf(it.first),
                 listOf(it.second),
                 triggerCtx,
-                monitorResult.alertError() ?: triggerResult.alertError()
+                monitorResult.alertError() ?: triggerResult.alertError(),
+                workflowExecutionId // TODO add execution id for other types of monitors also
+            )
+            alerts.add(alert)
+        }
+
+        if (findingDocPairs.isEmpty() && monitorResult.error != null) {
+            val alert = monitorCtx.alertService!!.composeDocLevelAlert(
+                listOf(),
+                listOf(),
+                triggerCtx,
+                monitorResult.alertError() ?: triggerResult.alertError(),
+                workflowExecutionId
             )
             alerts.add(alert)
         }
