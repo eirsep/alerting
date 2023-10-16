@@ -92,7 +92,11 @@ import java.util.stream.Collectors
 class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
 
     fun `test execute monitor with dryrun`() {
-        val docQuery = DocLevelQuery(query = "test_field:\"us-west-2\"", name = "3", fields = listOf())
+        val docQuery = DocLevelQuery(
+            query = "test_field_1:(120.85.114.146 OR 103.104.106.223 OR 185.191.246.45 OR 120.86.237.94)",
+            name = "3",
+            fields = listOf()
+        )
         val docLevelInput = DocLevelMonitorInput("description", listOf(index), listOf(docQuery))
         val trigger = randomDocumentLevelTrigger(condition = ALWAYS_RUN)
         var monitor = randomDocumentLevelMonitor(
@@ -104,7 +108,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
         val testDoc = """{
             "message" : "This is an error from IAD region",
             "test_strict_date_time" : "$testTime",
-            "test_field" : "us-west-2"
+            "test_field_1" : "120.85.114.146"
         }"""
         assertFalse(monitorResponse?.id.isNullOrEmpty())
         monitor = monitorResponse!!.monitor
@@ -113,6 +117,8 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
         val executeMonitorResponse = executeMonitor(monitor, id, true)
         Assert.assertEquals(executeMonitorResponse!!.monitorRunResult.monitorName, monitor.name)
         Assert.assertEquals(executeMonitorResponse.monitorRunResult.triggerResults.size, 1)
+        val values = executeMonitorResponse.monitorRunResult.inputResults.results[0].values
+        logger.error(values)
         searchAlerts(id)
         val table = Table("asc", "id", null, 1, 0, "")
         var getAlertsResponse = client()
