@@ -22,6 +22,7 @@ import org.opensearch.alerting.core.resthandler.RestScheduledJobStatsHandler
 import org.opensearch.alerting.core.schedule.JobScheduler
 import org.opensearch.alerting.core.settings.LegacyOpenDistroScheduledJobSettings
 import org.opensearch.alerting.core.settings.ScheduledJobSettings
+import org.opensearch.alerting.queryStringQuery.QueryShardContextFactory
 import org.opensearch.alerting.resthandler.RestAcknowledgeAlertAction
 import org.opensearch.alerting.resthandler.RestAcknowledgeChainedAlertAction
 import org.opensearch.alerting.resthandler.RestDeleteMonitorAction
@@ -285,8 +286,23 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
         )
 
         DeleteMonitorService.initialize(client)
+        QueryShardContextFactory.init(
+            client,
+            clusterService,
+            scriptService,
+            xContentRegistry,
+            namedWriteableRegistry,
+            environment
+        )
 
-        return listOf(sweeper, scheduler, runner, scheduledJobIndices, docLevelMonitorQueries, destinationMigrationCoordinator)
+        return listOf(
+            sweeper,
+            scheduler,
+            runner,
+            scheduledJobIndices,
+            docLevelMonitorQueries,
+            destinationMigrationCoordinator
+        )
     }
 
     override fun getSettings(): List<Setting<*>> {

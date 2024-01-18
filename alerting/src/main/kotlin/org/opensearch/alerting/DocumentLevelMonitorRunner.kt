@@ -21,6 +21,7 @@ import org.opensearch.alerting.model.MonitorMetadata
 import org.opensearch.alerting.model.MonitorRunResult
 import org.opensearch.alerting.model.userErrorMessage
 import org.opensearch.alerting.opensearchapi.suspendUntil
+import org.opensearch.alerting.queryStringQuery.QueryStringQueryUtils
 import org.opensearch.alerting.script.DocumentLevelTriggerExecutionContext
 import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT
 import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY
@@ -633,6 +634,12 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         monitorInputIndices: List<String>,
         concreteIndices: List<String>,
     ) {
+        val docLevelMonitorInput = monitor.inputs.get(0) as DocLevelMonitorInput
+
+        val extractFieldsFromQueryString = QueryStringQueryUtils.extractFieldsFromQueries(
+            docLevelMonitorInput.queries,
+            concreteIndexName
+        )
         val count: Int = docExecutionCtx.updatedLastRunContext["shards_count"] as Int
         for (i: Int in 0 until count) {
             val shard = i.toString()
@@ -647,7 +654,8 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                     prevSeqNo,
                     maxSeqNo,
                     null,
-                    docIds
+                    docIds,
+                    extractFieldsFromQueryString
                 )
                 transformedDocs.addAll(
                     transformSearchHitsAndReconstructDocs(
@@ -742,7 +750,8 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         prevSeqNo: Long?,
         maxSeqNo: Long,
         query: String?,
-        docIds: List<String>? = null
+        docIds: List<String>? = null,
+        fieldsToFetch: List<String>,
     ): SearchHits {
         if (prevSeqNo?.equals(maxSeqNo) == true && maxSeqNo != 0L) {
             return SearchHits.empty()
@@ -757,7 +766,6 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         if (!docIds.isNullOrEmpty()) {
             boolQueryBuilder.filter(QueryBuilders.termsQuery("_id", docIds))
         }
-
         val request: SearchRequest = SearchRequest()
             .indices(index)
             .preference("_shards:$shard")
@@ -768,6 +776,14 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                     .size(10000) // fixme: use scroll to ensure all docs are covered, when number of queryable docs are greater than 10k
             )
             .preference(Preference.PRIMARY_FIRST.type())
+
+        if (fieldsToFetch.isNotEmpty()) {
+//            request.source().fetchSource(false)
+            // TODO enable fetchsource=false after checking what _source looks like while transforming hit for percolate
+            for (field in fieldsToFetch) {
+                request.source().fetchField(field)
+            }
+        }
         val response: SearchResponse = monitorCtx.client!!.suspendUntil { monitorCtx.client!!.search(request, it) }
         if (response.status() !== RestStatus.OK) {
             throw IOException("Failed to search shard: [$shard] in index [$index]. Response status is ${response.status()}")
@@ -855,7 +871,16 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
     ): List<Pair<String, TransformedDocDto>> {
         return hits.mapNotNull(fun(hit: SearchHit): Pair<String, TransformedDocDto>? {
             try {
-                val sourceMap = hit.sourceAsMap
+                val sourceMap = if (hit.hasSource()) {
+                    constructSourceMapFromFieldsInHit(hit)
+                } else hit.sourceAsMap
+                if (sourceMap.isEmpty()) {
+                    logger.debug(
+                        "Doc level Monitor $monitorId:" +
+                            " Doc $hit doesn't have source nor selected fields with values. Skipping doc"
+                    )
+                    return null
+                }
                 transformDocumentFieldNames(
                     sourceMap,
                     conflictingFields,
@@ -873,6 +898,17 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                 return null
             }
         })
+    }
+
+    private fun constructSourceMapFromFieldsInHit(hit: SearchHit): MutableMap<String, Any> {
+        if (hit.fields == null)
+            return mutableMapOf()
+        val sourceMap: MutableMap<String, Any> = mutableMapOf()
+        for (field in hit.fields) {
+            if (field.value.values != null && field.value.values.isNotEmpty())
+                sourceMap[field.key] = field.value.values
+        }
+        return sourceMap
     }
 
     /**

@@ -370,7 +370,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
         val q1 = DocLevelQuery(query = "source.ip.v6.v1:12345", name = "3", fields = listOf())
         val q2 = DocLevelQuery(query = "source.ip.v6.v2:16645", name = "4", fields = listOf())
         val q3 = DocLevelQuery(query = "source.ip.v4.v0:120", name = "5", fields = listOf())
-        val q4 = DocLevelQuery(query = "alias.some.fff:\"us-west-2\"", name = "6", fields = listOf())
+        val q4 = DocLevelQuery(query = "fff:\"us-west-2\"", name = "6", fields = listOf())
         val q5 = DocLevelQuery(query = "message:\"This is an error from IAD region\"", name = "7", fields = listOf())
         val q6 = DocLevelQuery(query = "f1.type.f4:\"hello\"", name = "8", fields = listOf())
         val q7 = DocLevelQuery(query = "f1.type.f2.f3:\"world\"", name = "9", fields = listOf())
@@ -413,7 +413,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
         }"""
         indexDoc(index, "1", testDoc)
         client().admin().indices().putMapping(
-            PutMappingRequest(index).source("alias.some.fff", "type=alias,path=test_field.some_other_field")
+            PutMappingRequest(index).source("fff", "type=alias,path=test_field.some_other_field")
         )
         val mappings = "{\"properties\":{\"type\":{\"type\":\"text\",\"fields\":{\"keyword\":{\"type\":\"keyword\"," +
             "\"ignore_above\":256}}},\"query\":{\"type\":\"text\"}}}"

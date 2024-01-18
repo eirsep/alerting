@@ -202,6 +202,7 @@ class DocLevelMonitorQueries(private val client: Client, private val clusterServ
         val docLevelMonitorInput = monitor.inputs[0] as DocLevelMonitorInput
         val queries: List<DocLevelQuery> = docLevelMonitorInput.queries
 
+        val query = queries.get(0)
         val indices = docLevelMonitorInput.indices
         val clusterState = clusterService.state()
 
