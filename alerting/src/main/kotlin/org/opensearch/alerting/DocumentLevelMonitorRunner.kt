@@ -515,9 +515,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
 
         try {
             publishFinding(monitor, monitorCtx, finding)
-        } catch (e: Exception) {
-            // suppress exception
-            logger.error("Optional finding callback failed", e)
+        } catch (_: Exception) {
         }
         return finding.id
     }
@@ -836,7 +834,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                 monitorCtx.client!!.execute(SearchAction.INSTANCE, searchRequest, it)
             }
         } catch (e: Exception) {
-            throw IllegalStateException(
+                throw IllegalStateException(
                 "Monitor ${monitor.id}:" +
                     " Failed to run percolate search for sourceIndex [${concreteIndices.joinToString()}] " +
                     "and queryIndex [${queryIndices.joinToString()}] for ${docs.size} document(s)",
@@ -904,6 +902,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         if (hit.fields == null)
             return mutableMapOf()
         val sourceMap: MutableMap<String, Any> = mutableMapOf()
+        sourceMap["_id"] = hit.id
         for (field in hit.fields) {
             if (field.value.values != null && field.value.values.isNotEmpty())
                 sourceMap[field.key] = field.value.values
