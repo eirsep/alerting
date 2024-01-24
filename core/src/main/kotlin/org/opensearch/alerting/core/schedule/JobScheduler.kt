@@ -173,7 +173,6 @@ class JobScheduler(private val threadPool: ThreadPool, private val jobRunner: Jo
             scheduledJobInfo.actualPreviousExecutionTime = Instant.now()
 
             this.reschedule(scheduleJob, scheduledJobInfo)
-
             jobRunner.runJob(scheduleJob, startTime, endTime)
         }
 
