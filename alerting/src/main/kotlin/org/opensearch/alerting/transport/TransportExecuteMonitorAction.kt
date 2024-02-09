@@ -47,7 +47,7 @@ private val log = LogManager.getLogger(TransportExecuteMonitorAction::class.java
 private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 
 class TransportExecuteMonitorAction @Inject constructor(
-    transportService: TransportService,
+    private val transportService: TransportService,
     private val client: Client,
     private val clusterService: ClusterService,
     private val runner: MonitorRunnerService,
@@ -79,7 +79,7 @@ class TransportExecuteMonitorAction @Inject constructor(
                             "Executing monitor from API - id: ${monitor.id}, type: ${monitor.monitorType.name}, " +
                                 "periodStart: $periodStart, periodEnd: $periodEnd, dryrun: ${execMonitorRequest.dryrun}"
                         )
-                        val monitorRunResult = runner.runJob(monitor, periodStart, periodEnd, execMonitorRequest.dryrun)
+                        val monitorRunResult = runner.runJob(monitor, periodStart, periodEnd, execMonitorRequest.dryrun, transportService)
                         withContext(Dispatchers.IO) {
                             actionListener.onResponse(ExecuteMonitorResponse(monitorRunResult))
                         }

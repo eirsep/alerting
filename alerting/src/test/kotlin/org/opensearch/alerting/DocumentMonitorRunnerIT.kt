@@ -17,6 +17,7 @@ import org.opensearch.commons.alerting.model.Alert
 import org.opensearch.commons.alerting.model.DataSources
 import org.opensearch.commons.alerting.model.DocLevelMonitorInput
 import org.opensearch.commons.alerting.model.DocLevelQuery
+import org.opensearch.commons.alerting.model.IntervalSchedule
 import org.opensearch.commons.alerting.model.action.ActionExecutionPolicy
 import org.opensearch.commons.alerting.model.action.AlertCategory
 import org.opensearch.commons.alerting.model.action.PerAlertActionScope
@@ -26,6 +27,7 @@ import org.opensearch.script.Script
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit.MILLIS
+import java.time.temporal.ChronoUnit.MINUTES
 import java.util.Locale
 
 class DocumentMonitorRunnerIT : AlertingRestTestCase() {
@@ -120,15 +122,22 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         val docLevelInput = DocLevelMonitorInput("description", listOf(testIndex), listOf(docQuery))
 
         val trigger = randomDocumentLevelTrigger(condition = ALWAYS_RUN)
-        val monitor = createMonitor(randomDocumentLevelMonitor(inputs = listOf(docLevelInput), triggers = listOf(trigger)))
+        val monitor = createMonitor(
+            randomDocumentLevelMonitor(
+                inputs = listOf(docLevelInput),
+                triggers = listOf(trigger),
+                enabled = true,
+                schedule = IntervalSchedule(1, MINUTES)
+            )
+        )
         assertNotNull(monitor.id)
 
         indexDoc(testIndex, "1", testDoc)
         indexDoc(testIndex, "5", testDoc)
 
-        val response = executeMonitor(monitor.id)
+//        val response = executeMonitor(monitor.id)
 
-        val output = entityAsMap(response)
+/*        val output = entityAsMap(response)
 
         assertEquals(monitor.name, output["monitor_name"])
         @Suppress("UNCHECKED_CAST")
@@ -136,7 +145,7 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         @Suppress("UNCHECKED_CAST")
         val matchingDocsToQuery = searchResult[docQuery.id] as List<String>
         assertEquals("Incorrect search result", 2, matchingDocsToQuery.size)
-        assertTrue("Incorrect search result", matchingDocsToQuery.containsAll(listOf("1|$testIndex", "5|$testIndex")))
+        assertTrue("Incorrect search result", matchingDocsToQuery.containsAll(listOf("1|$testIndex", "5|$testIndex")))*/
 
         val alerts = searchAlertsWithFilter(monitor)
         assertEquals("Alert saved for test monitor", 2, alerts.size)

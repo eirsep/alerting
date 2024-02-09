@@ -913,7 +913,7 @@ abstract class AlertingRestTestCase : ODFERestTestCase() {
     /** A test index that can be used across tests. Feel free to add new fields but don't remove any. */
     protected fun createTestIndex(index: String = randomAlphaOfLength(10).lowercase(Locale.ROOT)): String {
         createIndex(
-            index, Settings.EMPTY,
+            index, Settings.builder().put("number_of_shards", 10).build(),
             """
                 "properties" : {
                   "test_strict_date_time" : { "type" : "date", "format" : "strict_date_time" },

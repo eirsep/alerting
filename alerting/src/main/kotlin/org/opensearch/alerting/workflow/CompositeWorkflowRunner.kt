@@ -252,7 +252,8 @@ object CompositeWorkflowRunner : WorkflowRunner() {
                 periodEnd,
                 dryRun,
                 workflowRunContext,
-                executionId
+                executionId,
+                null
             )
         } else if (delegateMonitor.isDocLevelMonitor()) {
             return DocumentLevelMonitorRunner.runMonitor(
@@ -262,7 +263,8 @@ object CompositeWorkflowRunner : WorkflowRunner() {
                 periodEnd,
                 dryRun,
                 workflowRunContext,
-                executionId
+                executionId,
+                null
             )
         } else if (delegateMonitor.isQueryLevelMonitor()) {
             return QueryLevelMonitorRunner.runMonitor(
@@ -272,7 +274,8 @@ object CompositeWorkflowRunner : WorkflowRunner() {
                 periodEnd,
                 dryRun,
                 workflowRunContext,
-                executionId
+                executionId,
+                null
             )
         } else {
             throw AlertingException.wrap(

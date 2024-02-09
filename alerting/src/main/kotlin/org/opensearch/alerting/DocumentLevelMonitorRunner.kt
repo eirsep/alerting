@@ -8,6 +8,7 @@ package org.opensearch.alerting
 import org.apache.logging.log4j.LogManager
 import org.opensearch.ExceptionsHelper
 import org.opensearch.OpenSearchStatusException
+import org.opensearch.action.ActionListenerResponseHandler
 import org.opensearch.action.DocWriteRequest
 import org.opensearch.action.bulk.BulkRequest
 import org.opensearch.action.bulk.BulkResponse
@@ -15,6 +16,7 @@ import org.opensearch.action.index.IndexRequest
 import org.opensearch.action.search.SearchAction
 import org.opensearch.action.search.SearchRequest
 import org.opensearch.action.search.SearchResponse
+import org.opensearch.action.support.GroupedActionListener
 import org.opensearch.action.support.WriteRequest
 import org.opensearch.alerting.action.DocLevelMonitorFanOutAction
 import org.opensearch.alerting.action.DocLevelMonitorFanOutRequest
@@ -38,6 +40,7 @@ import org.opensearch.alerting.workflow.WorkflowRunContext
 import org.opensearch.client.Client
 import org.opensearch.client.node.NodeClient
 import org.opensearch.cluster.metadata.IndexMetadata
+import org.opensearch.cluster.node.DiscoveryNode
 import org.opensearch.cluster.routing.ShardRouting
 import org.opensearch.cluster.service.ClusterService
 import org.opensearch.common.xcontent.XContentFactory
@@ -56,6 +59,7 @@ import org.opensearch.commons.alerting.model.action.PerAlertActionScope
 import org.opensearch.commons.alerting.util.string
 import org.opensearch.core.action.ActionListener
 import org.opensearch.core.common.bytes.BytesReference
+import org.opensearch.core.common.io.stream.Writeable
 import org.opensearch.core.index.shard.ShardId
 import org.opensearch.core.rest.RestStatus
 import org.opensearch.core.xcontent.ToXContent
@@ -71,6 +75,9 @@ import org.opensearch.search.SearchHit
 import org.opensearch.search.SearchHits
 import org.opensearch.search.builder.SearchSourceBuilder
 import org.opensearch.search.sort.SortOrder
+import org.opensearch.transport.TransportException
+import org.opensearch.transport.TransportRequestOptions
+import org.opensearch.transport.TransportService
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
@@ -89,6 +96,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         dryrun: Boolean,
         workflowRunContext: WorkflowRunContext?,
         executionId: String,
+        transportService: TransportService?
     ): MonitorRunResult<DocumentLevelTriggerRunResult> {
         logger.debug("Document-level-monitor is running ...")
         val isTempMonitor = dryrun || monitor.id == Monitor.NO_ID
@@ -270,27 +278,77 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                         conflictingFields.toList(),
                         matchingDocIdsPerIndex?.get(concreteIndexName),
                     )
-                    val docLevelMonitorFanOutRequest1 = DocLevelMonitorFanOutRequest(
-                        nodeId = clusterService.localNode().id,
-                        monitor = monitor,
-                        monitorMetadata = monitorMetadata,
-                        executionId = executionId,
-                        indexExecutionContexts = listOf(indexExecutionContext),
-                        listOf(
-                            ShardId(
-                                concreteIndexName,
-                                clusterService.state().metadata.index(concreteIndexName).indexUUID,
-                                0
-                            )
-                        ),
-                        workflowRunContext
+
+                    val shards = indexUpdatedRunContext.keys
+                    shards.remove("index")
+                    shards.remove("shards_count")
+
+                    val nodeMap = getNodes(monitorCtx)
+                    val nodeShardAssignments = distributeShards(
+                        monitorCtx,
+                        nodeMap.keys.toList(),
+                        shards.toList(),
+                        concreteIndexName
                     )
-                    val dlmfor: DocLevelMonitorFanOutResponse = monitorCtx.client!!.suspendUntil {
+/*                    val dlmfor: DocLevelMonitorFanOutResponse = monitorCtx.client!!.suspendUntil {
                         execute(DocLevelMonitorFanOutAction.INSTANCE, docLevelMonitorFanOutRequest1, it)
                     }
                     val lastRunContextFromResponse = dlmfor.lastRunContexts as MutableMap<String, MutableMap<String, Any>>
+<<<<<<< HEAD
                     updatedLastRunContext[concreteIndexName] = lastRunContextFromResponse[concreteIndexName] as MutableMap<String, Any>
                     logger.error(dlmfor)
+=======
+                    lastRunContext[concreteIndexName] = lastRunContextFromResponse[concreteIndexName] as MutableMap<String, Any>
+                    logger.error(dlmfor)*/
+
+                    nodeShardAssignments.forEach {
+                        logger.info(it.key)
+                        it.value.forEach { it1 ->
+                            logger.info(it1.id.toString())
+                        }
+                    }
+
+                    val listener = GroupedActionListener(
+                        object : ActionListener<Collection<DocLevelMonitorFanOutResponse>> {
+                            override fun onResponse(response: Collection<DocLevelMonitorFanOutResponse>) {
+                                logger.info("hit here1")
+                            }
+
+                            override fun onFailure(e: Exception) {
+                                logger.info("hit here2")
+                            }
+                        },
+                        nodeMap.size
+                    )
+                    val responseReader = Writeable.Reader {
+                        DocLevelMonitorFanOutResponse(it)
+                    }
+                    for (node in nodeMap) {
+                        val docLevelMonitorFanOutRequest = DocLevelMonitorFanOutRequest(
+                            node.key,
+                            monitor,
+                            monitorMetadata,
+                            executionId,
+                            listOf(indexExecutionContext),
+                            nodeShardAssignments[node.key]!!.toList(),
+                            workflowRunContext
+                        )
+                        transportService!!.sendRequest(
+                            node.value,
+                            DocLevelMonitorFanOutAction.NAME,
+                            docLevelMonitorFanOutRequest,
+                            TransportRequestOptions.EMPTY,
+                            object : ActionListenerResponseHandler<DocLevelMonitorFanOutResponse>(listener, responseReader) {
+                                override fun handleException(e: TransportException) {
+                                    listener.onFailure(e)
+                                }
+
+                                override fun handleResponse(response: DocLevelMonitorFanOutResponse) {
+                                    listener.onResponse(response)
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
@@ -1012,6 +1070,47 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
     ): Boolean {
         var maxNumDocsThreshold = PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY.get(monitorCtx.settings)
         return numDocs >= maxNumDocsThreshold
+    }
+
+    private suspend fun getNodes(monitorCtx: MonitorRunnerExecutionContext): MutableMap<String, DiscoveryNode> {
+        return monitorCtx.clusterService!!.state().nodes.dataNodes
+    }
+
+    private suspend fun distributeShards(
+        monitorCtx: MonitorRunnerExecutionContext,
+        allNodes: List<String>,
+        shards: List<String>,
+        index: String
+    ): Map<String, MutableSet<ShardId>> {
+
+        val totalShards = shards.size
+        val totalNodes = allNodes.size.coerceAtMost(totalShards / 2)
+        val shardsPerNode = totalShards / totalNodes
+        var shardsRemaining = totalShards % totalNodes
+
+        val shardIdList = shards.map {
+            ShardId(monitorCtx.clusterService!!.state().metadata.index(index).index, it.toInt())
+        }
+        val nodes = allNodes.subList(0, totalNodes)
+
+        val nodeShardAssignments = mutableMapOf<String, MutableSet<ShardId>>()
+        var idx = 0
+        for (node in nodes) {
+            val nodeShardAssignment = mutableSetOf<ShardId>()
+            for (i in 1..shardsPerNode) {
+                nodeShardAssignment.add(shardIdList[idx++])
+            }
+            nodeShardAssignments[node] = nodeShardAssignment
+        }
+
+        for (node in nodes) {
+            if (shardsRemaining == 0) {
+                break
+            }
+            nodeShardAssignments[node]!!.add(shardIdList[idx++])
+            --shardsRemaining
+        }
+        return nodeShardAssignments
     }
 
     /**
