@@ -290,16 +290,16 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                         shards.toList(),
                         concreteIndexName
                     )
-/*                    val dlmfor: DocLevelMonitorFanOutResponse = monitorCtx.client!!.suspendUntil {
-                        execute(DocLevelMonitorFanOutAction.INSTANCE, docLevelMonitorFanOutRequest1, it)
-                    }
-                    val lastRunContextFromResponse = dlmfor.lastRunContexts as MutableMap<String, MutableMap<String, Any>>
-<<<<<<< HEAD
-                    updatedLastRunContext[concreteIndexName] = lastRunContextFromResponse[concreteIndexName] as MutableMap<String, Any>
-                    logger.error(dlmfor)
-=======
-                    lastRunContext[concreteIndexName] = lastRunContextFromResponse[concreteIndexName] as MutableMap<String, Any>
-                    logger.error(dlmfor)*/
+                    /*                    val dlmfor: DocLevelMonitorFanOutResponse = monitorCtx.client!!.suspendUntil {
+                                            execute(DocLevelMonitorFanOutAction.INSTANCE, docLevelMonitorFanOutRequest1, it)
+                                        }
+                                        val lastRunContextFromResponse = dlmfor.lastRunContexts as MutableMap<String, MutableMap<String, Any>>
+                    <<<<<<< HEAD
+                                        updatedLastRunContext[concreteIndexName] = lastRunContextFromResponse[concreteIndexName] as MutableMap<String, Any>
+                                        logger.error(dlmfor)
+                    =======
+                                        lastRunContext[concreteIndexName] = lastRunContextFromResponse[concreteIndexName] as MutableMap<String, Any>
+                                        logger.error(dlmfor)*/
 
                     nodeShardAssignments.forEach {
                         logger.info(it.key)

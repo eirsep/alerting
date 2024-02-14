@@ -270,6 +270,7 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
                     runJob(job, periodStart, periodEnd, false)
                 }
             }
+
             is Monitor -> {
                 launch {
                     logger.debug(
@@ -292,6 +293,7 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
                     }
                 }
             }
+
             else -> {
                 throw IllegalArgumentException("Invalid job type")
             }
@@ -302,7 +304,13 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
         return CompositeWorkflowRunner.runWorkflow(workflow, monitorCtx, periodStart, periodEnd, dryrun)
     }
 
-    suspend fun runJob(job: ScheduledJob, periodStart: Instant, periodEnd: Instant, dryrun: Boolean, transportService: TransportService): MonitorRunResult<*> {
+    suspend fun runJob(
+        job: ScheduledJob,
+        periodStart: Instant,
+        periodEnd: Instant,
+        dryrun: Boolean,
+        transportService: TransportService,
+    ): MonitorRunResult<*> {
         // Updating the scheduled job index at the start of monitor execution runs for when there is an upgrade the the schema mapping
         // has not been updated.
         if (!IndexUtils.scheduledJobIndexUpdated && monitorCtx.clusterService != null && monitorCtx.client != null) {
@@ -331,11 +339,35 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
                 "periodEnd: $periodEnd, dryrun: $dryrun, executionId: $executionId"
         )
         val runResult = if (monitor.isBucketLevelMonitor()) {
-            BucketLevelMonitorRunner.runMonitor(monitor, monitorCtx, periodStart, periodEnd, dryrun, executionId = executionId, transportService = transportService)
+            BucketLevelMonitorRunner.runMonitor(
+                monitor,
+                monitorCtx,
+                periodStart,
+                periodEnd,
+                dryrun,
+                executionId = executionId,
+                transportService = transportService
+            )
         } else if (monitor.isDocLevelMonitor()) {
-            DocumentLevelMonitorRunner.runMonitor(monitor, monitorCtx, periodStart, periodEnd, dryrun, executionId = executionId, transportService = transportService)
+            DocumentLevelMonitorRunner.runMonitor(
+                monitor,
+                monitorCtx,
+                periodStart,
+                periodEnd,
+                dryrun,
+                executionId = executionId,
+                transportService = transportService
+            )
         } else {
-            QueryLevelMonitorRunner.runMonitor(monitor, monitorCtx, periodStart, periodEnd, dryrun, executionId = executionId, transportService = transportService)
+            QueryLevelMonitorRunner.runMonitor(
+                monitor,
+                monitorCtx,
+                periodStart,
+                periodEnd,
+                dryrun,
+                executionId = executionId,
+                transportService = transportService
+            )
         }
         return runResult
     }
