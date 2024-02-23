@@ -245,7 +245,7 @@ class TransportDocLevelMonitorFanOutAction
             val triggerResults = mutableMapOf<String, DocumentLevelTriggerRunResult>()
             // If there are no triggers defined, we still want to generate findings
             if (monitor.triggers.isEmpty()) {
-                if (monitor.id != Monitor.NO_ID) {
+                if (request.dryRun == false && monitor.id != Monitor.NO_ID) {
                     log.error("PERF_DEBUG: Creating ${docsToQueries.size} findings for monitor ${monitor.id}")
                     createFindings(monitor, monitorCtx, docsToQueries, idQueryMap, true)
                 }
@@ -259,7 +259,7 @@ class TransportDocLevelMonitorFanOutAction
                         idQueryMap,
                         docsToQueries,
                         queryToDocIds,
-                        false,
+                        request.dryRun,
                         executionId = request.executionId,
                         workflowRunContext = request.workflowRunContext
                     )

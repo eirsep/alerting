@@ -31,6 +31,7 @@ import org.opensearch.core.xcontent.ToXContent
 import org.opensearch.index.query.BoolQueryBuilder
 import org.opensearch.index.query.QueryBuilders
 import org.opensearch.search.builder.SearchSourceBuilder
+import org.opensearch.transport.TransportService
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -148,6 +149,20 @@ fun addFilter(user: User, searchSourceBuilder: SearchSourceBuilder, fieldName: S
  * @param block - a block of code that is passed an [ActionListener] that should be passed to the OpenSearch client API.
  */
 suspend fun <C : OpenSearchClient, T> C.suspendUntil(block: C.(ActionListener<T>) -> Unit): T =
+    suspendCoroutine { cont ->
+        block(object : ActionListener<T> {
+            override fun onResponse(response: T) = cont.resume(response)
+
+            override fun onFailure(e: Exception) = cont.resumeWithException(e)
+        })
+    }
+
+/**
+ * Converts [OpenSearchClient] methods that take a callback into a kotlin suspending function.
+ *
+ * @param block - a block of code that is passed an [ActionListener] that should be passed to the OpenSearch client API.
+ */
+suspend fun <C : TransportService, T> C.suspendUntil(block: C.(ActionListener<T>) -> Unit): T =
     suspendCoroutine { cont ->
         block(object : ActionListener<T> {
             override fun onResponse(response: T) = cont.resume(response)

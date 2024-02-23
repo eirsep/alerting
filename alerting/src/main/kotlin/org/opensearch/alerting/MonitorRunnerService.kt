@@ -16,6 +16,9 @@ import org.opensearch.action.support.master.AcknowledgedResponse
 import org.opensearch.alerting.action.ExecuteMonitorAction
 import org.opensearch.alerting.action.ExecuteMonitorRequest
 import org.opensearch.alerting.action.ExecuteMonitorResponse
+import org.opensearch.alerting.action.ExecuteWorkflowAction
+import org.opensearch.alerting.action.ExecuteWorkflowRequest
+import org.opensearch.alerting.action.ExecuteWorkflowResponse
 import org.opensearch.alerting.alerts.AlertIndices
 import org.opensearch.alerting.alerts.AlertMover.Companion.moveAlerts
 import org.opensearch.alerting.core.JobRunner
@@ -26,8 +29,10 @@ import org.opensearch.alerting.model.destination.DestinationContextFactory
 import org.opensearch.alerting.opensearchapi.retry
 import org.opensearch.alerting.opensearchapi.suspendUntil
 import org.opensearch.alerting.script.TriggerExecutionContext
+import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERT_BACKOFF_COUNT
 import org.opensearch.alerting.settings.AlertingSettings.Companion.ALERT_BACKOFF_MILLIS
+import org.opensearch.alerting.settings.AlertingSettings.Companion.DOC_LEVEL_MONITOR_FAN_OUT_NODES
 import org.opensearch.alerting.settings.AlertingSettings.Companion.INDEX_TIMEOUT
 import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_ACTIONABLE_ALERT_COUNT
 import org.opensearch.alerting.settings.AlertingSettings.Companion.MOVE_ALERTS_BACKOFF_COUNT
@@ -63,6 +68,7 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
 
 object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleComponent() {
@@ -179,6 +185,24 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
             monitorCtx.maxActionableAlertCount = it
         }
 
+        monitorCtx.totalNodesFanOut = DOC_LEVEL_MONITOR_FAN_OUT_NODES.get(monitorCtx.settings)
+        monitorCtx.clusterService!!.clusterSettings.addSettingsUpdateConsumer(DOC_LEVEL_MONITOR_FAN_OUT_NODES) {
+            monitorCtx.totalNodesFanOut = it
+        }
+
+        monitorCtx.percQueryMaxNumDocsInMemory =
+            AlertingSettings.PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY.get(monitorCtx.settings)
+        monitorCtx.clusterService!!.clusterSettings.addSettingsUpdateConsumer(AlertingSettings.PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY) {
+            monitorCtx.percQueryMaxNumDocsInMemory = it
+        }
+
+        monitorCtx.percQueryDocsSizeMemoryPercentageLimit =
+            AlertingSettings.PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT.get(monitorCtx.settings)
+        monitorCtx.clusterService!!.clusterSettings
+            .addSettingsUpdateConsumer(AlertingSettings.PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT) {
+                monitorCtx.percQueryDocsSizeMemoryPercentageLimit = it
+            }
+
         monitorCtx.indexTimeout = INDEX_TIMEOUT.get(monitorCtx.settings)
 
         return this
@@ -267,7 +291,14 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
                         "PERF_DEBUG: executing workflow ${job.id} on node " +
                             monitorCtx.clusterService!!.state().nodes().localNode.id
                     )
-                    runJob(job, periodStart, periodEnd, false)
+
+                    monitorCtx.client!!.suspendUntil<Client, ExecuteWorkflowResponse> {
+                        monitorCtx.client!!.execute(
+                            ExecuteWorkflowAction.INSTANCE,
+                            ExecuteWorkflowRequest(false, TimeValue(1, TimeUnit.DAYS), job.id, job),
+                            it
+                        )
+                    }
                 }
             }
 
@@ -300,8 +331,21 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
         }
     }
 
-    suspend fun runJob(workflow: Workflow, periodStart: Instant, periodEnd: Instant, dryrun: Boolean): WorkflowRunResult {
-        return CompositeWorkflowRunner.runWorkflow(workflow, monitorCtx, periodStart, periodEnd, dryrun)
+    suspend fun runJob(
+        workflow: Workflow,
+        periodStart: Instant,
+        periodEnd: Instant,
+        dryrun: Boolean,
+        transportService: TransportService,
+    ): WorkflowRunResult {
+        return CompositeWorkflowRunner.runWorkflow(
+            workflow,
+            monitorCtx,
+            periodStart,
+            periodEnd,
+            dryrun,
+            transportService
+        )
     }
 
     suspend fun runJob(
@@ -330,7 +374,13 @@ object MonitorRunnerService : JobRunner, CoroutineScope, AbstractLifecycleCompon
 
         if (job is Workflow) {
             logger.info("Executing scheduled workflow - id: ${job.id}, periodStart: $periodStart, periodEnd: $periodEnd, dryrun: $dryrun")
-            CompositeWorkflowRunner.runWorkflow(workflow = job, monitorCtx, periodStart, periodEnd, dryrun)
+            monitorCtx.client!!.suspendUntil<Client, ExecuteWorkflowResponse> {
+                monitorCtx.client!!
+                    .execute(
+                        ExecuteWorkflowAction.INSTANCE,
+                        ExecuteWorkflowRequest(false, TimeValue(1, TimeUnit.DAYS), job.id, job)
+                    )
+            }
         }
         val monitor = job as Monitor
         val executionId = "${monitor.id}_${LocalDateTime.now(ZoneOffset.UTC)}_${UUID.randomUUID()}"

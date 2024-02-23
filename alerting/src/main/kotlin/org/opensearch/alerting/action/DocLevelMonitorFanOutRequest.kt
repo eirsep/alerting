@@ -23,6 +23,7 @@ class DocLevelMonitorFanOutRequest : ActionRequest, ToXContentObject {
 
     val nodeId: String
     val monitor: Monitor
+    val dryRun: Boolean
     val monitorMetadata: MonitorMetadata
     val executionId: String
     val indexExecutionContexts: List<IndexExecutionContext>
@@ -32,6 +33,7 @@ class DocLevelMonitorFanOutRequest : ActionRequest, ToXContentObject {
     constructor(
         nodeId: String,
         monitor: Monitor,
+        dryRun: Boolean,
         monitorMetadata: MonitorMetadata,
         executionId: String,
         indexExecutionContexts: List<IndexExecutionContext>,
@@ -40,6 +42,7 @@ class DocLevelMonitorFanOutRequest : ActionRequest, ToXContentObject {
     ) : super() {
         this.nodeId = nodeId
         this.monitor = monitor
+        this.dryRun = dryRun
         this.monitorMetadata = monitorMetadata
         this.executionId = executionId
         this.indexExecutionContexts = indexExecutionContexts
@@ -53,6 +56,7 @@ class DocLevelMonitorFanOutRequest : ActionRequest, ToXContentObject {
     constructor(sin: StreamInput) : this(
         nodeId = sin.readString(),
         monitor = Monitor.readFrom(sin)!!,
+        dryRun = sin.readBoolean(),
         monitorMetadata = MonitorMetadata.readFrom(sin),
         executionId = sin.readString(),
         indexExecutionContexts = sin.readList { IndexExecutionContext(sin) },
@@ -66,6 +70,7 @@ class DocLevelMonitorFanOutRequest : ActionRequest, ToXContentObject {
     override fun writeTo(out: StreamOutput) {
         out.writeString(nodeId)
         monitor.writeTo(out)
+        out.writeBoolean(dryRun)
         monitorMetadata.writeTo(out)
         out.writeString(executionId)
         out.writeCollection(indexExecutionContexts)
@@ -93,6 +98,7 @@ class DocLevelMonitorFanOutRequest : ActionRequest, ToXContentObject {
         builder.startObject()
             .field("node_id", nodeId)
             .field("monitor", monitor)
+            .field("dry_run", dryRun)
             .field("execution_id", executionId)
             .field("index_execution_contexts", indexExecutionContexts)
             .field("shard_ids", shardIds)

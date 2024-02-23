@@ -30,8 +30,6 @@ import org.opensearch.alerting.model.userErrorMessage
 import org.opensearch.alerting.opensearchapi.suspendUntil
 import org.opensearch.alerting.script.DocumentLevelTriggerExecutionContext
 import org.opensearch.alerting.settings.AlertingSettings.Companion.DOC_LEVEL_MONITOR_FETCH_ONLY_QUERY_FIELDS_ENABLED
-import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT
-import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY
 import org.opensearch.alerting.util.AlertingException
 import org.opensearch.alerting.util.IndexUtils
 import org.opensearch.alerting.util.defaultToPerExecutionAction
@@ -83,6 +81,9 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import java.util.stream.Collectors
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 import kotlin.math.max
 
 object DocumentLevelMonitorRunner : MonitorRunner() {
@@ -96,8 +97,10 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         dryrun: Boolean,
         workflowRunContext: WorkflowRunContext?,
         executionId: String,
-        transportService: TransportService?
+        transportService: TransportService?,
     ): MonitorRunResult<DocumentLevelTriggerRunResult> {
+        if (transportService == null)
+            throw RuntimeException("transport service should not be null")
         logger.debug("Document-level-monitor is running ...")
         val isTempMonitor = dryrun || monitor.id == Monitor.NO_ID
         var monitorResult = MonitorRunResult<DocumentLevelTriggerRunResult>(monitor.name, periodStart, periodEnd)
@@ -182,6 +185,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
             val concreteIndicesSeenSoFar = mutableListOf<String>()
             val updatedIndexNames = mutableListOf<String>()
             val queryingStartTimeMillis = System.currentTimeMillis()
+            val docLevelMonitorFanOutResponses: MutableList<DocLevelMonitorFanOutResponse> = mutableListOf()
             docLevelMonitorInput.indices.forEach { indexName ->
 
                 var concreteIndices = IndexUtils.resolveAllIndices(
@@ -278,8 +282,8 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                         conflictingFields.toList(),
                         matchingDocIdsPerIndex?.get(concreteIndexName),
                     )
-
-                    val shards = indexUpdatedRunContext.keys
+                    val shards = mutableSetOf<String>()
+                    shards.addAll(indexUpdatedRunContext.keys)
                     shards.remove("index")
                     shards.remove("shards_count")
 
@@ -307,57 +311,63 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                             logger.info(it1.id.toString())
                         }
                     }
-
-                    val listener = GroupedActionListener(
-                        object : ActionListener<Collection<DocLevelMonitorFanOutResponse>> {
-                            override fun onResponse(response: Collection<DocLevelMonitorFanOutResponse>) {
-                                logger.info("hit here1")
-                            }
-
-                            override fun onFailure(e: Exception) {
-                                logger.info("hit here2")
-                            }
-                        },
-                        nodeMap.size
-                    )
-                    val responseReader = Writeable.Reader {
-                        DocLevelMonitorFanOutResponse(it)
-                    }
-                    for (node in nodeMap) {
-                        val docLevelMonitorFanOutRequest = DocLevelMonitorFanOutRequest(
-                            node.key,
-                            monitor,
-                            monitorMetadata,
-                            executionId,
-                            listOf(indexExecutionContext),
-                            nodeShardAssignments[node.key]!!.toList(),
-                            workflowRunContext
-                        )
-                        transportService!!.sendRequest(
-                            node.value,
-                            DocLevelMonitorFanOutAction.NAME,
-                            docLevelMonitorFanOutRequest,
-                            TransportRequestOptions.EMPTY,
-                            object : ActionListenerResponseHandler<DocLevelMonitorFanOutResponse>(listener, responseReader) {
-                                override fun handleException(e: TransportException) {
-                                    listener.onFailure(e)
+                    val responses: Collection<DocLevelMonitorFanOutResponse> = suspendCoroutine { cont ->
+                        val listener = GroupedActionListener(
+                            object : ActionListener<Collection<DocLevelMonitorFanOutResponse>> {
+                                override fun onResponse(response: Collection<DocLevelMonitorFanOutResponse>) {
+                                    logger.info("hit here1")
+                                    cont.resume(response)
                                 }
 
-                                override fun handleResponse(response: DocLevelMonitorFanOutResponse) {
-                                    listener.onResponse(response)
+                                override fun onFailure(e: Exception) {
+                                    logger.info("Fan out failed")
+                                    cont.resumeWithException(e)
                                 }
-                            }
+                            },
+                            nodeMap.size
                         )
+                        val responseReader = Writeable.Reader {
+                            DocLevelMonitorFanOutResponse(it)
+                        }
+                        for (node in nodeMap) {
+                            val docLevelMonitorFanOutRequest = DocLevelMonitorFanOutRequest(
+                                node.key,
+                                monitor,
+                                dryrun,
+                                monitorMetadata,
+                                executionId,
+                                listOf(indexExecutionContext),
+                                nodeShardAssignments[node.key]!!.toList(),
+                                workflowRunContext
+                            )
+
+                            transportService.sendRequest(
+                                node.value,
+                                DocLevelMonitorFanOutAction.NAME,
+                                docLevelMonitorFanOutRequest,
+                                TransportRequestOptions.EMPTY,
+                                object : ActionListenerResponseHandler<DocLevelMonitorFanOutResponse>(listener, responseReader) {
+                                    override fun handleException(e: TransportException) {
+                                        listener.onFailure(e)
+                                    }
+
+                                    override fun handleResponse(response: DocLevelMonitorFanOutResponse) {
+                                        listener.onResponse(response)
+                                    }
+                                }
+                            )
+                        }
                     }
+                    docLevelMonitorFanOutResponses.addAll(responses)
                 }
             }
-
+            updateLastRunContextFromFanOutResponses(docLevelMonitorFanOutResponses, updatedLastRunContext)
             MonitorMetadataService.upsertMetadata(
                 monitorMetadata.copy(lastRunContext = updatedLastRunContext),
                 true
             )
             // TODO: Update the Document as part of the Trigger and return back the trigger action result
-            return monitorResult.copy(triggerResults = emptyMap())
+            return monitorResult.copy(triggerResults = buildTriggerResults(docLevelMonitorFanOutResponses))
         } catch (e: Exception) {
             val errorMessage = ExceptionsHelper.detailedMessage(e)
             monitorCtx.alertService!!.upsertMonitorErrorAlert(monitor, errorMessage, executionId, workflowRunContext)
@@ -380,6 +390,35 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
             logger.error("PERF_DEBUG_STATS: Monitor ${monitor.id} Time spent on transforming doc fields in millis: $docTransformTimeTaken")
             logger.error("PERF_DEBUG_STATS: Monitor ${monitor.id} Num docs queried: $totalDocsQueried")
         }
+    }
+
+    private fun buildTriggerResults(
+        docLevelMonitorFanOutResponses: MutableList<DocLevelMonitorFanOutResponse>,
+    ): Map<String, DocumentLevelTriggerRunResult> {
+        val triggerResults = mutableMapOf<String, DocumentLevelTriggerRunResult>()
+        for (res in docLevelMonitorFanOutResponses) {
+            for (triggerId in res.triggerResults.keys) {
+                val documentLevelTriggerRunResult = res.triggerResults[triggerId]
+                if (documentLevelTriggerRunResult != null) {
+                    if (false == triggerResults.contains(triggerId)) {
+                        triggerResults[triggerId] = documentLevelTriggerRunResult
+                    } else {
+                        val currVal = triggerResults[triggerId]
+                        val newTrigggeredDocs = mutableListOf<String>()
+                        newTrigggeredDocs.addAll(currVal!!.triggeredDocs)
+                        newTrigggeredDocs.addAll(documentLevelTriggerRunResult.triggeredDocs)
+                        triggerResults.put(
+                            triggerId,
+                            currVal.copy(
+                                triggeredDocs = newTrigggeredDocs,
+                                error = if (currVal.error != null) currVal.error else documentLevelTriggerRunResult.error
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        return triggerResults
     }
 
     private suspend fun onSuccessfulMonitorRun(monitorCtx: MonitorRunnerExecutionContext, monitor: Monitor) {
@@ -597,6 +636,35 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         )
     }
 
+    private fun updateLastRunContextFromFanOutResponses(
+        docLevelMonitorFanOutResponses: MutableList<DocLevelMonitorFanOutResponse>,
+        updatedLastRunContext: MutableMap<String, MutableMap<String, Any>>,
+    ) {
+        // Prepare updatedLastRunContext for each index
+        for (indexName in updatedLastRunContext.keys) {
+            for (fanOutResponse in docLevelMonitorFanOutResponses) {
+                // fanOutResponse.lastRunContexts //updatedContexts for relevant shards
+                val indexLastRunContext = updatedLastRunContext[indexName] as MutableMap<String, Any>
+
+                if (fanOutResponse.lastRunContexts.contains(indexName)) {
+                    val partialUpdatedIndexLastRunContext = fanOutResponse.lastRunContexts[indexName] as MutableMap<String, Any>
+                    partialUpdatedIndexLastRunContext.keys.forEach {
+
+                        val seq_no = partialUpdatedIndexLastRunContext[it].toString().toIntOrNull()
+                        if (
+                            it != "shards_count" &&
+                            it != "index" &&
+                            seq_no != null &&
+                            seq_no != SequenceNumbers.UNASSIGNED_SEQ_NO.toInt()
+                        ) {
+                            indexLastRunContext[it] = seq_no
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun initializeNewLastRunContext(
         lastRunContext: Map<String, Any>,
         monitorCtx: MonitorRunnerExecutionContext,
@@ -670,7 +738,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
     }
 
     private fun getShardsCount(clusterService: ClusterService, index: String): Int {
-        val allShards: List<ShardRouting> = clusterService!!.state().routingTable().allShards(index)
+        val allShards: List<ShardRouting> = clusterService.state().routingTable().allShards(index)
         return allShards.filter { it.primary() }.size
     }
 
@@ -1057,7 +1125,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         docsBytesSize: Long,
         monitorCtx: MonitorRunnerExecutionContext,
     ): Boolean {
-        var thresholdPercentage = PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT.get(monitorCtx.settings)
+        var thresholdPercentage = monitorCtx.percQueryDocsSizeMemoryPercentageLimit
         val heapMaxBytes = monitorCtx.jvmStats!!.mem.heapMax.bytes
         val thresholdBytes = (thresholdPercentage.toDouble() / 100.0) * heapMaxBytes
 
@@ -1068,7 +1136,7 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         numDocs: Int,
         monitorCtx: MonitorRunnerExecutionContext,
     ): Boolean {
-        var maxNumDocsThreshold = PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY.get(monitorCtx.settings)
+        var maxNumDocsThreshold = monitorCtx.percQueryMaxNumDocsInMemory
         return numDocs >= maxNumDocsThreshold
     }
 
@@ -1076,15 +1144,15 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
         return monitorCtx.clusterService!!.state().nodes.dataNodes
     }
 
-    private suspend fun distributeShards(
+    private fun distributeShards(
         monitorCtx: MonitorRunnerExecutionContext,
         allNodes: List<String>,
         shards: List<String>,
-        index: String
+        index: String,
     ): Map<String, MutableSet<ShardId>> {
 
         val totalShards = shards.size
-        val totalNodes = allNodes.size.coerceAtMost(totalShards / 2)
+        val totalNodes = monitorCtx.totalNodesFanOut.coerceAtMost((totalShards + 1) / 2)
         val shardsPerNode = totalShards / totalNodes
         var shardsRemaining = totalShards % totalNodes
 
