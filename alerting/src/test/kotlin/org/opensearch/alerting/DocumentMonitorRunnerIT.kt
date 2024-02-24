@@ -135,25 +135,26 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         indexDoc(testIndex, "1", testDoc)
         indexDoc(testIndex, "5", testDoc)
 
-//        val response = executeMonitor(monitor.id)
+        val response = executeMonitor(monitor.id)
 
-/*        val output = entityAsMap(response)
+        val output = entityAsMap(response)
 
         assertEquals(monitor.name, output["monitor_name"])
         @Suppress("UNCHECKED_CAST")
         val searchResult = (output.objectMap("input_results")["results"] as List<Map<String, Any>>).first()
+
         @Suppress("UNCHECKED_CAST")
         val matchingDocsToQuery = searchResult[docQuery.id] as List<String>
         assertEquals("Incorrect search result", 2, matchingDocsToQuery.size)
-        assertTrue("Incorrect search result", matchingDocsToQuery.containsAll(listOf("1|$testIndex", "5|$testIndex")))*/
+        assertTrue("Incorrect search result", matchingDocsToQuery.containsAll(listOf("1|$testIndex", "5|$testIndex")))
 
         val alerts = searchAlertsWithFilter(monitor)
         assertEquals("Alert saved for test monitor", 2, alerts.size)
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor with tag as trigger condition generates alerts and findings`() {
@@ -192,8 +193,8 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor input error`() {
@@ -291,8 +292,8 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor generates alerts and findings with per trigger execution for actions`() {
@@ -354,8 +355,8 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor with wildcard index that generates alerts and findings for EQUALS query operator`() {

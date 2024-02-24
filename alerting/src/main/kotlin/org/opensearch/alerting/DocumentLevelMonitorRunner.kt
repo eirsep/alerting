@@ -53,7 +53,6 @@ import org.opensearch.commons.alerting.model.DocLevelQuery
 import org.opensearch.commons.alerting.model.DocumentLevelTrigger
 import org.opensearch.commons.alerting.model.Finding
 import org.opensearch.commons.alerting.model.Monitor
-import org.opensearch.commons.alerting.model.ScheduledJob
 import org.opensearch.commons.alerting.model.action.PerAlertActionScope
 import org.opensearch.commons.alerting.util.string
 import org.opensearch.core.action.ActionListener
@@ -318,9 +317,6 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                                 override fun onResponse(response: Collection<DocLevelMonitorFanOutResponse>) {
                                     logger.info("hit here1")
                                     cont.resume(response)
-                                    val hasIndex =
-                                        monitorCtx.clusterService!!.state().routingTable.hasIndex(ScheduledJob.SCHEDULED_JOBS_INDEX)
-                                    logger.error("exists check")
                                 }
 
                                 override fun onFailure(e: Exception) {
@@ -393,7 +389,9 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
             return monitorResult.copy(triggerResults = triggerResults, inputResults = inputRunResults)
         } catch (e: Exception) {
             val errorMessage = ExceptionsHelper.detailedMessage(e)
-            monitorCtx.alertService!!.upsertMonitorErrorAlert(monitor, errorMessage, executionId, workflowRunContext)
+            if (!isTempMonitor) {
+                monitorCtx.alertService!!.upsertMonitorErrorAlert(monitor, errorMessage, executionId, workflowRunContext)
+            }
             logger.error("Failed running Document-level-monitor ${monitor.name}", e)
             val alertingException = AlertingException(
                 errorMessage,
@@ -1192,7 +1190,8 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
     ): Map<String, MutableSet<ShardId>> {
 
         val totalShards = shards.size
-        val totalNodes = monitorCtx.totalNodesFanOut.coerceAtMost((totalShards + 1) / 2)
+        val numFanOutNodes = allNodes.size.coerceAtMost((totalShards + 1) / 2)
+        val totalNodes = monitorCtx.totalNodesFanOut.coerceAtMost(numFanOutNodes)
         val shardsPerNode = totalShards / totalNodes
         var shardsRemaining = totalShards % totalNodes
 
