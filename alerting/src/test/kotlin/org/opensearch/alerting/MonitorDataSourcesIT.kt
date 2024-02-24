@@ -645,7 +645,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
             .get()
         Assert.assertTrue(getAlertsResponse != null)
         Assert.assertTrue(getAlertsResponse.alerts.size == 1)
-        Assert.assertTrue(getAlertsResponse.alerts[0].errorMessage == "IndexClosedException[closed]")
+        Assert.assertTrue(getAlertsResponse.alerts[0].errorMessage!!.contains("IndexClosedException[closed]"))
         // Reopen index
         client().admin().indices().open(OpenIndexRequest(index)).get()
         // Close queryIndex

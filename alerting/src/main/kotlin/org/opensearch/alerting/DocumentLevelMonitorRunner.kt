@@ -324,8 +324,11 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
                                 }
 
                                 override fun onFailure(e: Exception) {
-                                    logger.info("Fan out failed")
-                                    cont.resumeWithException(e)
+                                    logger.info("Fan out failed", e)
+                                    if (e.cause is Exception) // unwrap remote transport exception
+                                        cont.resumeWithException(e.cause as Exception)
+                                    else
+                                        cont.resumeWithException(e)
                                 }
                             },
                             nodeMap.size
