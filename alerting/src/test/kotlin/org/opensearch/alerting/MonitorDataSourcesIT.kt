@@ -1006,6 +1006,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
                 queryIndexMappingsByType = mapOf(Pair("text", mapOf(Pair("analyzer", analyzer)))),
             )
         )
+        assertIndexNotExists(SCHEDULED_JOBS_INDEX)
         var executeMonitorResponse = executeMonitor(monitor, null)
         val testTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(ZonedDateTime.now().truncatedTo(MILLIS))
         val testDoc = """{
