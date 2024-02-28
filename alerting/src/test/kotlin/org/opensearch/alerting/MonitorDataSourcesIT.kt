@@ -645,7 +645,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
             .get()
         Assert.assertTrue(getAlertsResponse != null)
         Assert.assertTrue(getAlertsResponse.alerts.size == 1)
-        Assert.assertTrue(getAlertsResponse.alerts[0].errorMessage == "IndexClosedException[closed]")
+        Assert.assertTrue(getAlertsResponse.alerts[0].errorMessage!!.contains("IndexClosedException[closed]"))
         // Reopen index
         client().admin().indices().open(OpenIndexRequest(index)).get()
         // Close queryIndex
@@ -1006,6 +1006,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
                 queryIndexMappingsByType = mapOf(Pair("text", mapOf(Pair("analyzer", analyzer)))),
             )
         )
+        assertIndexNotExists(SCHEDULED_JOBS_INDEX)
         var executeMonitorResponse = executeMonitor(monitor, null)
         val testTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(ZonedDateTime.now().truncatedTo(MILLIS))
         val testDoc = """{

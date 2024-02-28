@@ -6,6 +6,7 @@
 package org.opensearch.alerting
 
 import org.opensearch.action.ActionRequest
+import org.opensearch.alerting.action.DocLevelMonitorFanOutAction
 import org.opensearch.alerting.action.ExecuteMonitorAction
 import org.opensearch.alerting.action.ExecuteWorkflowAction
 import org.opensearch.alerting.action.GetDestinationsAction
@@ -51,6 +52,7 @@ import org.opensearch.alerting.transport.TransportAcknowledgeAlertAction
 import org.opensearch.alerting.transport.TransportAcknowledgeChainedAlertAction
 import org.opensearch.alerting.transport.TransportDeleteMonitorAction
 import org.opensearch.alerting.transport.TransportDeleteWorkflowAction
+import org.opensearch.alerting.transport.TransportDocLevelMonitorFanOutAction
 import org.opensearch.alerting.transport.TransportExecuteMonitorAction
 import org.opensearch.alerting.transport.TransportExecuteWorkflowAction
 import org.opensearch.alerting.transport.TransportGetAlertsAction
@@ -211,7 +213,8 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             ActionPlugin.ActionHandler(AlertingActions.INDEX_WORKFLOW_ACTION_TYPE, TransportIndexWorkflowAction::class.java),
             ActionPlugin.ActionHandler(AlertingActions.GET_WORKFLOW_ACTION_TYPE, TransportGetWorkflowAction::class.java),
             ActionPlugin.ActionHandler(AlertingActions.DELETE_WORKFLOW_ACTION_TYPE, TransportDeleteWorkflowAction::class.java),
-            ActionPlugin.ActionHandler(ExecuteWorkflowAction.INSTANCE, TransportExecuteWorkflowAction::class.java)
+            ActionPlugin.ActionHandler(ExecuteWorkflowAction.INSTANCE, TransportExecuteWorkflowAction::class.java),
+            ActionPlugin.ActionHandler(DocLevelMonitorFanOutAction.INSTANCE, TransportDocLevelMonitorFanOutAction::class.java)
         )
     }
 
@@ -322,6 +325,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             AlertingSettings.MAX_ACTION_THROTTLE_VALUE,
             AlertingSettings.FILTER_BY_BACKEND_ROLES,
             AlertingSettings.MAX_ACTIONABLE_ALERT_COUNT,
+            AlertingSettings.DOC_LEVEL_MONITOR_FAN_OUT_NODES,
             LegacyOpenDistroAlertingSettings.INPUT_TIMEOUT,
             LegacyOpenDistroAlertingSettings.INDEX_TIMEOUT,
             LegacyOpenDistroAlertingSettings.BULK_TIMEOUT,

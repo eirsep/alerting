@@ -39,11 +39,11 @@ import java.time.Instant
 private val log = LogManager.getLogger(TransportExecuteWorkflowAction::class.java)
 
 class TransportExecuteWorkflowAction @Inject constructor(
-    transportService: TransportService,
     private val client: Client,
     private val runner: MonitorRunnerService,
     actionFilters: ActionFilters,
-    val xContentRegistry: NamedXContentRegistry
+    val xContentRegistry: NamedXContentRegistry,
+    val transportService: TransportService,
 ) : HandledTransportAction<ExecuteWorkflowRequest, ExecuteWorkflowResponse>(
     ExecuteWorkflowAction.NAME, transportService, actionFilters, ::ExecuteWorkflowRequest
 ) {
@@ -57,7 +57,7 @@ class TransportExecuteWorkflowAction @Inject constructor(
         val user: User? = User.parse(userStr)
 
         client.threadPool().threadContext.stashContext().use {
-            val executeWorkflow = fun(workflow: Workflow) {
+            val executeWorkflow = fun(workflow: Workflow, transportService: TransportService) {
                 runner.launch {
                     val (periodStart, periodEnd) =
                         workflow.schedule.getPeriodEndingAt(Instant.ofEpochMilli(execWorkflowRequest.requestEnd.millis))
@@ -67,7 +67,7 @@ class TransportExecuteWorkflowAction @Inject constructor(
                                 "dryrun: ${execWorkflowRequest.dryrun}"
                         )
                         val workflowRunResult =
-                            MonitorRunnerService.runJob(workflow, periodStart, periodEnd, execWorkflowRequest.dryrun)
+                            MonitorRunnerService.runJob(workflow, periodStart, periodEnd, execWorkflowRequest.dryrun, transportService)
                         withContext(Dispatchers.IO, {
                             actionListener.onResponse(
                                 ExecuteWorkflowResponse(
@@ -108,7 +108,7 @@ class TransportExecuteWorkflowAction @Inject constructor(
                                     response.sourceAsBytesRef, XContentType.JSON
                                 ).use { xcp ->
                                     val workflow = ScheduledJob.parse(xcp, response.id, response.version) as Workflow
-                                    executeWorkflow(workflow)
+                                    executeWorkflow(workflow, transportService)
                                 }
                             }
                         }
@@ -125,7 +125,7 @@ class TransportExecuteWorkflowAction @Inject constructor(
                     false -> (execWorkflowRequest.workflow as Workflow).copy(user = user)
                 }
 
-                executeWorkflow(workflow)
+                executeWorkflow(workflow, transportService)
             }
         }
     }

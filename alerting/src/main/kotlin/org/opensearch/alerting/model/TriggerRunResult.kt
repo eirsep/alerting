@@ -6,6 +6,7 @@
 package org.opensearch.alerting.model
 
 import org.opensearch.commons.alerting.alerts.AlertError
+import org.opensearch.core.common.io.stream.StreamInput
 import org.opensearch.core.common.io.stream.StreamOutput
 import org.opensearch.core.common.io.stream.Writeable
 import org.opensearch.core.xcontent.ToXContent
@@ -15,8 +16,14 @@ import java.time.Instant
 
 abstract class TriggerRunResult(
     open var triggerName: String,
-    open var error: Exception? = null
+    open var error: Exception? = null,
 ) : Writeable, ToXContent {
+
+    @Throws(IOException::class)
+    constructor(sin: StreamInput) : this(
+        sin.readString(),
+        if (sin.readBoolean()) sin.readException() else null
+    )
 
     override fun toXContent(builder: XContentBuilder, params: ToXContent.Params): XContentBuilder {
         builder.startObject()
@@ -43,7 +50,10 @@ abstract class TriggerRunResult(
     @Throws(IOException::class)
     override fun writeTo(out: StreamOutput) {
         out.writeString(triggerName)
-        out.writeException(error)
+        if (error == null) out.writeBoolean(false) else {
+            out.writeBoolean(true)
+            out.writeException(error)
+        }
     }
 
     companion object {

@@ -17,6 +17,7 @@ import org.opensearch.commons.alerting.model.Alert
 import org.opensearch.commons.alerting.model.DataSources
 import org.opensearch.commons.alerting.model.DocLevelMonitorInput
 import org.opensearch.commons.alerting.model.DocLevelQuery
+import org.opensearch.commons.alerting.model.IntervalSchedule
 import org.opensearch.commons.alerting.model.action.ActionExecutionPolicy
 import org.opensearch.commons.alerting.model.action.AlertCategory
 import org.opensearch.commons.alerting.model.action.PerAlertActionScope
@@ -26,6 +27,7 @@ import org.opensearch.script.Script
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit.MILLIS
+import java.time.temporal.ChronoUnit.MINUTES
 import java.util.Locale
 
 class DocumentMonitorRunnerIT : AlertingRestTestCase() {
@@ -120,7 +122,14 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         val docLevelInput = DocLevelMonitorInput("description", listOf(testIndex), listOf(docQuery))
 
         val trigger = randomDocumentLevelTrigger(condition = ALWAYS_RUN)
-        val monitor = createMonitor(randomDocumentLevelMonitor(inputs = listOf(docLevelInput), triggers = listOf(trigger)))
+        val monitor = createMonitor(
+            randomDocumentLevelMonitor(
+                inputs = listOf(docLevelInput),
+                triggers = listOf(trigger),
+                enabled = true,
+                schedule = IntervalSchedule(1, MINUTES)
+            )
+        )
         assertNotNull(monitor.id)
 
         indexDoc(testIndex, "1", testDoc)
@@ -133,6 +142,7 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         assertEquals(monitor.name, output["monitor_name"])
         @Suppress("UNCHECKED_CAST")
         val searchResult = (output.objectMap("input_results")["results"] as List<Map<String, Any>>).first()
+
         @Suppress("UNCHECKED_CAST")
         val matchingDocsToQuery = searchResult[docQuery.id] as List<String>
         assertEquals("Incorrect search result", 2, matchingDocsToQuery.size)
@@ -143,8 +153,8 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor with tag as trigger condition generates alerts and findings`() {
@@ -183,8 +193,8 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor input error`() {
@@ -282,8 +292,8 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor generates alerts and findings with per trigger execution for actions`() {
@@ -345,8 +355,8 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
 
         val findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
-        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1"))
-        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[0].relatedDocIds.contains("1") || findings[0].relatedDocIds.contains("5"))
+        assertTrue("Findings saved for test monitor", findings[1].relatedDocIds.contains("5") || findings[1].relatedDocIds.contains("1"))
     }
 
     fun `test execute monitor with wildcard index that generates alerts and findings for EQUALS query operator`() {
@@ -458,11 +468,11 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         indexDoc(testIndex2, "5", testDoc)
         executeMonitor(monitor.id)
 
-        var alerts = searchAlertsWithFilter(monitor)
-        assertEquals("Alert saved for test monitor", 2, alerts.size)
-
         var findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
+
+        var alerts = searchAlertsWithFilter(monitor)
+        assertEquals("Alert saved for test monitor", 2, alerts.size)
 
         var foundFindings = findings.filter { it.relatedDocIds.contains("1") || it.relatedDocIds.contains("5") }
         assertEquals("Findings saved for test monitor expected 1 and 5", 2, foundFindings.size)
