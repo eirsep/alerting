@@ -141,10 +141,6 @@ object DocumentLevelMonitorRunner : MonitorRunner() {
 
         val updatedLastRunContext = lastRunContext.toMutableMap()
 
-        val queryToDocIds = mutableMapOf<DocLevelQuery, MutableSet<String>>()
-        val inputRunResults = mutableMapOf<String, MutableSet<String>>()
-        val docsToQueries = mutableMapOf<String, MutableList<String>>()
-
         try {
             // Resolve all passed indices to concrete indices
             val clusterService = monitorCtx.clusterService!!

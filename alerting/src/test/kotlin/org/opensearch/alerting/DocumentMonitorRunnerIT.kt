@@ -468,11 +468,11 @@ class DocumentMonitorRunnerIT : AlertingRestTestCase() {
         indexDoc(testIndex2, "5", testDoc)
         executeMonitor(monitor.id)
 
-        var alerts = searchAlertsWithFilter(monitor)
-        assertEquals("Alert saved for test monitor", 2, alerts.size)
-
         var findings = searchFindings(monitor)
         assertEquals("Findings saved for test monitor", 2, findings.size)
+
+        var alerts = searchAlertsWithFilter(monitor)
+        assertEquals("Alert saved for test monitor", 2, alerts.size)
 
         var foundFindings = findings.filter { it.relatedDocIds.contains("1") || it.relatedDocIds.contains("5") }
         assertEquals("Findings saved for test monitor expected 1 and 5", 2, foundFindings.size)

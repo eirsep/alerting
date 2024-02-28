@@ -187,6 +187,7 @@ class TransportDocLevelMonitorFanOutAction
                         .get()
                 fetchShardDataAndMaybeExecutePercolateQueries(
                     request.monitor,
+                    entry.value,
                     monitorCtx,
                     indexExecutionContext,
                     request.monitorMetadata,
@@ -397,6 +398,7 @@ class TransportDocLevelMonitorFanOutAction
      *  3b. If yes, perform percolate query and update docToQueries Map with all hits from percolate queries */
     private suspend fun fetchShardDataAndMaybeExecutePercolateQueries(
         monitor: Monitor,
+        shardList: MutableList<Int>,
         monitorCtx: MonitorRunnerExecutionContext,
         indexExecutionCtx: IndexExecutionContext,
         monitorMetadata: MonitorMetadata,
@@ -414,8 +416,7 @@ class TransportDocLevelMonitorFanOutAction
         shardIdFailureMap: MutableMap<String, Exception>,
         updateLastRunContext: (String, String) -> Unit,
     ) {
-        val count: Int = indexExecutionCtx.updatedLastRunContext["shards_count"] as Int
-        for (i: Int in 0 until count) {
+        for (i in shardList) {
             val shard = i.toString()
             try {
                 val prevSeqNo = indexExecutionCtx.lastRunContext[shard].toString().toLongOrNull()
