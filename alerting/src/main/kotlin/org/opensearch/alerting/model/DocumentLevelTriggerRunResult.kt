@@ -12,11 +12,12 @@ import org.opensearch.core.xcontent.XContentBuilder
 import org.opensearch.script.ScriptException
 import java.io.IOException
 
+@Suppress("IMPLICIT_NOTHING_TYPE_ARGUMENT_AGAINST_NOT_NOTHING_EXPECTED_TYPE")
 data class DocumentLevelTriggerRunResult(
     override var triggerName: String,
     var triggeredDocs: List<String>,
     override var error: Exception?,
-    var actionResultsMap: MutableMap<String, MutableMap<String, ActionRunResult>> = mutableMapOf()
+    var actionResultsMap: MutableMap<String, MutableMap<String, ActionRunResult>> = mutableMapOf(),
 ) : TriggerRunResult(triggerName, error) {
 
     @Throws(IOException::class)
@@ -31,7 +32,7 @@ data class DocumentLevelTriggerRunResult(
     override fun internalXContent(builder: XContentBuilder, params: ToXContent.Params): XContentBuilder {
         if (error is ScriptException) error = Exception((error as ScriptException).toJsonString(), error)
         return builder
-            .field("triggeredDocs", triggeredDocs as List<String>)
+            .field("triggeredDocs", triggeredDocs)
             .field("action_results", actionResultsMap as Map<String, Any>)
     }
 

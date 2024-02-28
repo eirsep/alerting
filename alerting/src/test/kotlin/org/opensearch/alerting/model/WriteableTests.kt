@@ -5,25 +5,99 @@
 
 package org.opensearch.alerting.model
 
+import org.junit.Assert
+import org.junit.Test
+import org.opensearch.ResourceNotFoundException
+import org.opensearch.alerting.action.DocLevelMonitorFanOutResponse
 import org.opensearch.alerting.model.destination.email.EmailAccount
 import org.opensearch.alerting.model.destination.email.EmailGroup
-import org.opensearch.alerting.randomActionRunResult
 import org.opensearch.alerting.randomBucketLevelMonitorRunResult
 import org.opensearch.alerting.randomBucketLevelTriggerRunResult
 import org.opensearch.alerting.randomDocumentLevelMonitorRunResult
-import org.opensearch.alerting.randomDocumentLevelTriggerRunResult
 import org.opensearch.alerting.randomEmailAccount
 import org.opensearch.alerting.randomEmailGroup
 import org.opensearch.alerting.randomInputRunResults
 import org.opensearch.alerting.randomQueryLevelMonitorRunResult
 import org.opensearch.alerting.randomQueryLevelTriggerRunResult
+import org.opensearch.common.UUIDs
 import org.opensearch.common.io.stream.BytesStreamOutput
 import org.opensearch.commons.alerting.model.SearchInput
 import org.opensearch.core.common.io.stream.StreamInput
 import org.opensearch.search.builder.SearchSourceBuilder
 import org.opensearch.test.OpenSearchTestCase
+import java.time.Instant
 
 class WriteableTests : OpenSearchTestCase() {
+
+    @Test
+    fun `test DocumentLevelTriggerRunResult as stream`() {
+        val workflow = randomDocumentLevelTriggerRunResult()
+        val out = BytesStreamOutput()
+        workflow.writeTo(out)
+        val sin = StreamInput.wrap(out.bytes().toBytesRef().bytes)
+        val newWorkflow = DocumentLevelTriggerRunResult(sin)
+        Assert.assertEquals("Round tripping dltrr failed", newWorkflow, workflow)
+    }
+
+    @Test
+    fun `test dlmfor as stream`() {
+        val workflow = DocLevelMonitorFanOutResponse(
+            "nodeid",
+            "eid",
+            "monitorId",
+            mapOf("test" to ResourceNotFoundException("test")),
+            listOf("f1", "f2"),
+            mapOf("index" to mapOf("1" to "1")) as MutableMap<String, Any>,
+            InputRunResults(),
+            mapOf("1" to randomDocumentLevelTriggerRunResult(), "2" to randomDocumentLevelTriggerRunResult())
+        )
+        val out = BytesStreamOutput()
+        workflow.writeTo(out)
+        val sin = StreamInput.wrap(out.bytes().toBytesRef().bytes)
+        val newWorkflow = DocumentLevelTriggerRunResult(sin)
+        Assert.assertEquals("Round tripping dltrr failed", newWorkflow, workflow)
+    }
+
+    @Test
+    fun `test dlmfor1 as stream`() {
+        val workflow = DocLevelMonitorFanOutResponse(
+            "nodeid",
+            "eid",
+            "monitorId",
+            mapOf(),
+            listOf("f1", "f2"),
+            mapOf("index" to mapOf("1" to "1")) as MutableMap<String, Any>,
+            InputRunResults(),
+            mapOf("1" to randomDocumentLevelTriggerRunResult(), "2" to randomDocumentLevelTriggerRunResult())
+        )
+        val out = BytesStreamOutput()
+        workflow.writeTo(out)
+        val sin = StreamInput.wrap(out.bytes().toBytesRef().bytes)
+        val newWorkflow = DocLevelMonitorFanOutResponse(sin)
+        Assert.assertEquals("Round tripping dltrr failed", newWorkflow, workflow)
+    }
+
+    fun randomDocumentLevelTriggerRunResult(): DocumentLevelTriggerRunResult {
+        val map = mutableMapOf<String, ActionRunResult>()
+        map.plus(Pair("key1", randomActionRunResult()))
+        map.plus(Pair("key2", randomActionRunResult()))
+        return DocumentLevelTriggerRunResult(
+            "trigger-name",
+            mutableListOf(UUIDs.randomBase64UUID().toString()),
+            null,
+            mutableMapOf(Pair("alertId", map))
+        )
+    }
+
+    fun randomActionRunResult(): ActionRunResult {
+        val map = mutableMapOf<String, String>()
+        map.plus(Pair("key1", "val1"))
+        map.plus(Pair("key2", "val2"))
+        return ActionRunResult(
+            "1234", "test-action", map,
+            false, Instant.now(), null
+        )
+    }
 
     fun `test actionrunresult as stream`() {
         val actionRunResult = randomActionRunResult()

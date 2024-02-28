@@ -7,7 +7,6 @@ package org.opensearch.alerting.action
 
 import org.opensearch.alerting.model.DocumentLevelTriggerRunResult
 import org.opensearch.alerting.model.InputRunResults
-import org.opensearch.alerting.model.MonitorRunResult
 import org.opensearch.core.action.ActionResponse
 import org.opensearch.core.common.io.stream.StreamInput
 import org.opensearch.core.common.io.stream.StreamOutput
@@ -37,7 +36,7 @@ class DocLevelMonitorFanOutResponse : ActionResponse, ToXContentObject {
         findingIds = sin.readStringList(),
         lastRunContexts = sin.readMap()!! as MutableMap<String, Any>,
         inputResults = InputRunResults.readFrom(sin),
-        triggerResults = MonitorRunResult.suppressWarning(sin.readMap()) as Map<String, DocumentLevelTriggerRunResult> // triggerResults
+        triggerResults = suppressWarning(sin.readMap(StreamInput::readString, DocumentLevelTriggerRunResult::readFrom))
     )
 
     constructor(
@@ -69,7 +68,11 @@ class DocLevelMonitorFanOutResponse : ActionResponse, ToXContentObject {
         out.writeStringCollection(findingIds)
         out.writeMap(lastRunContexts)
         inputResults.writeTo(out)
-        out.writeMap(triggerResults)
+        out.writeMap(
+            triggerResults,
+            StreamOutput::writeString,
+            { stream, stats -> stats.writeTo(stream) }
+        )
     }
 
     @Throws(IOException::class)
@@ -78,5 +81,12 @@ class DocLevelMonitorFanOutResponse : ActionResponse, ToXContentObject {
             .field("last_run_contexts", lastRunContexts)
             .endObject()
         return builder
+    }
+
+    companion object {
+        @Suppress("UNCHECKED_CAST")
+        fun suppressWarning(map: MutableMap<String?, Any?>?): Map<String, DocumentLevelTriggerRunResult> {
+            return map as Map<String, DocumentLevelTriggerRunResult>
+        }
     }
 }
