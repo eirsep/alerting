@@ -61,6 +61,7 @@ import org.opensearch.alerting.settings.AlertingSettings.Companion.MAX_ACTIONABL
 import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT
 import org.opensearch.alerting.settings.AlertingSettings.Companion.PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY
 import org.opensearch.alerting.settings.DestinationSettings
+import org.opensearch.alerting.threatintel.ThreatIntelDetectionService
 import org.opensearch.alerting.util.AlertingException
 import org.opensearch.alerting.util.defaultToPerExecutionAction
 import org.opensearch.alerting.util.destinationmigration.NotificationActionConfigs
@@ -140,7 +141,8 @@ class TransportDocLevelMonitorFanOutAction
     val alertService: AlertService,
     val scriptService: ScriptService,
     val settings: Settings,
-    val xContentRegistry: NamedXContentRegistry
+    val xContentRegistry: NamedXContentRegistry,
+    val threatIntelDetectionService: ThreatIntelDetectionService,
 ) : HandledTransportAction<DocLevelMonitorFanOutRequest, DocLevelMonitorFanOutResponse>(
     DocLevelMonitorFanOutAction.NAME, transportService, actionFilters, ::DocLevelMonitorFanOutRequest
 ),
@@ -152,21 +154,38 @@ class TransportDocLevelMonitorFanOutAction
     var totalDocsSizeInBytesStat = 0L
     var docsSizeOfBatchInBytes = 0L
     var findingsToTriggeredQueries: Map<String, List<DocLevelQuery>> = mutableMapOf()
+
     // Maps a finding ID to the related document.
     private val findingIdToDocSource = mutableMapOf<String, MultiGetItemResponse>()
 
-    @Volatile var percQueryMaxNumDocsInMemory: Int = PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY.get(settings)
-    @Volatile var percQueryDocsSizeMemoryPercentageLimit: Int = PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT.get(settings)
-    @Volatile var docLevelMonitorShardFetchSize: Int = DOC_LEVEL_MONITOR_SHARD_FETCH_SIZE.get(settings)
-    @Volatile var findingsIndexBatchSize: Int = FINDINGS_INDEXING_BATCH_SIZE.get(settings)
-    @Volatile var maxActionableAlertCount: Long = MAX_ACTIONABLE_ALERT_COUNT.get(settings)
-    @Volatile var retryPolicy = BackoffPolicy.constantBackoff(ALERT_BACKOFF_MILLIS.get(settings), ALERT_BACKOFF_COUNT.get(settings))
-    @Volatile var allowList: List<String> = DestinationSettings.ALLOW_LIST.get(settings)
-    @Volatile var fetchOnlyQueryFieldNames = DOC_LEVEL_MONITOR_FETCH_ONLY_QUERY_FIELDS_ENABLED.get(settings)
+    @Volatile
+    var percQueryMaxNumDocsInMemory: Int = PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY.get(settings)
+
+    @Volatile
+    var percQueryDocsSizeMemoryPercentageLimit: Int = PERCOLATE_QUERY_DOCS_SIZE_MEMORY_PERCENTAGE_LIMIT.get(settings)
+
+    @Volatile
+    var docLevelMonitorShardFetchSize: Int = DOC_LEVEL_MONITOR_SHARD_FETCH_SIZE.get(settings)
+
+    @Volatile
+    var findingsIndexBatchSize: Int = FINDINGS_INDEXING_BATCH_SIZE.get(settings)
+
+    @Volatile
+    var maxActionableAlertCount: Long = MAX_ACTIONABLE_ALERT_COUNT.get(settings)
+
+    @Volatile
+    var retryPolicy = BackoffPolicy.constantBackoff(ALERT_BACKOFF_MILLIS.get(settings), ALERT_BACKOFF_COUNT.get(settings))
+
+    @Volatile
+    var allowList: List<String> = DestinationSettings.ALLOW_LIST.get(settings)
+
+    @Volatile
+    var fetchOnlyQueryFieldNames = DOC_LEVEL_MONITOR_FETCH_ONLY_QUERY_FIELDS_ENABLED.get(settings)
 
     /* Contains list of docs source that are held in memory to submit to percolate query against query index.
             * Docs are fetched from the source index per shard and transformed.*/
     val transformedDocs = mutableListOf<Pair<String, TransformedDocDto>>()
+    val searchHitsBeingProcessed: MutableList<SearchHit> = mutableListOf()
 
     init {
         clusterService.clusterSettings.addSettingsUpdateConsumer(PERCOLATE_QUERY_MAX_NUM_DOCS_IN_MEMORY) {
@@ -201,7 +220,7 @@ class TransportDocLevelMonitorFanOutAction
     override fun doExecute(
         task: Task,
         request: DocLevelMonitorFanOutRequest,
-        listener: ActionListener<DocLevelMonitorFanOutResponse>
+        listener: ActionListener<DocLevelMonitorFanOutResponse>,
     ) {
         scope.launch {
             executeMonitor(request, listener)
@@ -210,7 +229,7 @@ class TransportDocLevelMonitorFanOutAction
 
     private suspend fun executeMonitor(
         request: DocLevelMonitorFanOutRequest,
-        listener: ActionListener<DocLevelMonitorFanOutResponse>
+        listener: ActionListener<DocLevelMonitorFanOutResponse>,
     ) {
         try {
             val monitor = request.monitor
@@ -265,7 +284,8 @@ class TransportDocLevelMonitorFanOutAction
                 updatedIndexNames,
                 concreteIndicesSeenSoFar,
                 ArrayList(fieldsToBeQueried),
-                shardIds.map { it.id }
+                iocFields = docLevelMonitorInput.iocFieldNames,
+                shardIds.map { it.id },
             ) { shard, maxSeqNo -> // function passed to update last run context with new max sequence number
                 indexExecutionContext.updatedLastRunContext[shard] = maxSeqNo
             }
@@ -357,7 +377,7 @@ class TransportDocLevelMonitorFanOutAction
         queryToDocIds: Map<DocLevelQuery, Set<String>>,
         dryrun: Boolean,
         executionId: String,
-        workflowRunContext: WorkflowRunContext?
+        workflowRunContext: WorkflowRunContext?,
     ): DocumentLevelTriggerRunResult {
         val triggerCtx = DocumentLevelTriggerExecutionContext(monitor, trigger)
         val triggerResult = triggerService.runDocLevelTrigger(monitor, trigger, queryToDocIds)
@@ -536,7 +556,7 @@ class TransportDocLevelMonitorFanOutAction
 
     private suspend fun bulkIndexFindings(
         monitor: Monitor,
-        indexRequests: List<IndexRequest>
+        indexRequests: List<IndexRequest>,
     ) {
         indexRequests.chunked(findingsIndexBatchSize).forEach { batch ->
             val bulkResponse: BulkResponse = client.suspendUntil {
@@ -557,7 +577,7 @@ class TransportDocLevelMonitorFanOutAction
 
     private fun publishFinding(
         monitor: Monitor,
-        finding: Finding
+        finding: Finding,
     ) {
         val publishFindingsRequest = PublishFindingsRequest(monitor.id, finding)
         AlertingPluginInterface.publishFinding(
@@ -575,7 +595,7 @@ class TransportDocLevelMonitorFanOutAction
         action: Action,
         ctx: TriggerExecutionContext,
         monitor: Monitor,
-        dryrun: Boolean
+        dryrun: Boolean,
     ): ActionRunResult {
         return try {
             if (ctx is QueryLevelTriggerExecutionContext && !MonitorRunnerService.isActionActionable(action, ctx.alert)) {
@@ -624,7 +644,7 @@ class TransportDocLevelMonitorFanOutAction
     protected suspend fun getConfigAndSendNotification(
         action: Action,
         subject: String?,
-        message: String
+        message: String,
     ): String {
         val config = getConfigForNotificationAction(action)
         if (config.destination == null && config.channel == null) {
@@ -673,8 +693,9 @@ class TransportDocLevelMonitorFanOutAction
         monitorInputIndices: List<String>,
         concreteIndices: List<String>,
         fieldsToBeQueried: List<String>,
+        iocFields: List<String>,
         shardList: List<Int>,
-        updateLastRunContext: (String, String) -> Unit
+        updateLastRunContext: (String, String) -> Unit,
     ) {
         for (shardId in shardList) {
             val shard = shardId.toString()
@@ -690,6 +711,7 @@ class TransportDocLevelMonitorFanOutAction
                         to,
                         indexExecutionCtx.docIds,
                         fieldsToBeQueried,
+                        iocFields
                     )
                     if (hits.hits.isEmpty()) {
                         if (to == Long.MAX_VALUE) {
@@ -697,6 +719,7 @@ class TransportDocLevelMonitorFanOutAction
                         }
                         break
                     }
+                    searchHitsBeingProcessed.addAll(hits.hits.asList())
                     if (to == Long.MAX_VALUE) { // max sequence number of shard needs to be computed
                         updateLastRunContext(shard, hits.hits[0].seqNo.toString())
                     }
@@ -783,9 +806,16 @@ class TransportDocLevelMonitorFanOutAction
                 }
             }
             totalDocsQueriedStat += transformedDocs.size.toLong()
+            if ((monitor.inputs[0] as DocLevelMonitorInput).iocFieldNames.isNotEmpty())
+                threatIntelDetectionService.scanDataAgainstThreatIntel(
+                    monitor,
+                    listOf(".opensearch-sap-threat-intel*"),
+                    searchHitsBeingProcessed
+                )
         } finally {
             transformedDocs.clear()
             docsSizeOfBatchInBytes = 0
+            searchHitsBeingProcessed.clear()
         }
     }
 
@@ -869,6 +899,7 @@ class TransportDocLevelMonitorFanOutAction
         maxSeqNo: Long,
         docIds: List<String>? = null,
         fieldsToFetch: List<String>,
+        iocFields: List<String>,
     ): SearchHits {
         if (prevSeqNo?.equals(maxSeqNo) == true && maxSeqNo != 0L) {
             return SearchHits.empty()
@@ -898,6 +929,7 @@ class TransportDocLevelMonitorFanOutAction
                 request.source().fetchField(field)
             }
         }
+        iocFields.forEach { request.source().fetchField(it) }
         val response: SearchResponse = client.suspendUntil { client.search(request, it) }
         if (response.status() !== RestStatus.OK) {
             throw IOException("Failed to search shard: [$shard] in index [$index]. Response status is ${response.status()}")
@@ -1042,7 +1074,7 @@ class TransportDocLevelMonitorFanOutAction
      */
     private suspend fun getDocSources(
         findingToDocPairs: List<Pair<String, String>>,
-        monitor: Monitor
+        monitor: Monitor,
     ) {
         val docFieldTags = parseSampleDocTags(monitor.triggers)
         val request = MultiGetRequest()
@@ -1074,7 +1106,7 @@ class TransportDocLevelMonitorFanOutAction
      * To cover both of these cases, the Notification config will take precedence and if it is not found, the Destination will be retrieved.
      */
     private suspend fun getConfigForNotificationAction(
-        action: Action
+        action: Action,
     ): NotificationActionConfigs {
         var destination: Destination? = null
         var notificationPermissionException: Exception? = null
@@ -1150,7 +1182,7 @@ class TransportDocLevelMonitorFanOutAction
     }
 
     private fun constructErrorMessageFromTriggerResults(
-        triggerResults: MutableMap<String, DocumentLevelTriggerRunResult>? = null
+        triggerResults: MutableMap<String, DocumentLevelTriggerRunResult>? = null,
     ): String {
         var errorMessage = ""
         if (triggerResults != null) {
@@ -1175,6 +1207,6 @@ class TransportDocLevelMonitorFanOutAction
         var indexName: String,
         var concreteIndexName: String,
         var docId: String,
-        var docSource: BytesReference
+        var docSource: BytesReference,
     )
 }

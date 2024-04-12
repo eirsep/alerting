@@ -52,6 +52,7 @@ import org.opensearch.alerting.settings.AlertingSettings.Companion.DOC_LEVEL_MON
 import org.opensearch.alerting.settings.DestinationSettings
 import org.opensearch.alerting.settings.LegacyOpenDistroAlertingSettings
 import org.opensearch.alerting.settings.LegacyOpenDistroDestinationSettings
+import org.opensearch.alerting.threatintel.ThreatIntelDetectionService
 import org.opensearch.alerting.transport.TransportAcknowledgeAlertAction
 import org.opensearch.alerting.transport.TransportAcknowledgeChainedAlertAction
 import org.opensearch.alerting.transport.TransportDeleteMonitorAction
@@ -258,6 +259,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
         val lockService = LockService(client, clusterService)
         alertIndices = AlertIndices(settings, client, threadPool, clusterService)
         val alertService = AlertService(client, xContentRegistry, alertIndices)
+        val threatIntelDetectionService = ThreatIntelDetectionService(client, xContentRegistry)
         val triggerService = TriggerService(scriptService)
         runner = MonitorRunnerService
             .registerClusterService(clusterService)
@@ -310,7 +312,8 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             destinationMigrationCoordinator,
             lockService,
             alertService,
-            triggerService
+            triggerService,
+            threatIntelDetectionService
         )
     }
 

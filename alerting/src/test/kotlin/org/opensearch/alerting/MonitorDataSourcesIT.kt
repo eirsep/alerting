@@ -413,7 +413,7 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
                 queryFieldNames = listOf("alias.some.fff", "source.ip.v6.v1")
             )
         val docLevelInput = DocLevelMonitorInput(
-            "description", listOf(index), listOf(docQuery1, docQuery2, docQuery3, docQuery4, docQuery5, docQuery6, docQuery7)
+            "description", listOf(index), listOf(docQuery1), iocFieldNames = listOf("source.ip.v6.v1")
         )
         val trigger = randomDocumentLevelTrigger(condition = ALWAYS_RUN)
         val customFindingsIndex = "custom_findings_index"
@@ -442,7 +442,23 @@ class MonitorDataSourcesIT : AlertingSingleNodeTestCase() {
             "type.subtype" : "some subtype",
             "supertype.type" : "some type"
         }"""
+        val testDoc1 = """{
+            "message" : "This is an error from IAD region",
+            "source.ip.v6.v1" : 123456,
+            "source.ip.v6.v2" : 16645,
+            "source.ip.v4.v0" : 120,
+            "test_bad_char" : "\u0000", 
+            "test_strict_date_time" : "$testTime",
+            "test_field.some_other_field" : "us-west-2",
+            "type.subtype" : "some subtype",
+            "supertype.type" : "some type"
+        }"""
+        val doc = "{\"ioc\" : \"12345\"}"
+        val doc1 = "{\"ioc\" : \"123456\"}"
         indexDoc(index, "1", testDoc)
+        indexDoc(index, "2", testDoc1)
+        indexDoc(".opensearch-sap-threat-intel", "1", doc)
+        indexDoc(".opensearch-sap-threat-intel", "2", doc1)
         client().admin().indices().putMapping(
             PutMappingRequest(index).source("alias.some.fff", "type=alias,path=test_field.some_other_field")
         )
