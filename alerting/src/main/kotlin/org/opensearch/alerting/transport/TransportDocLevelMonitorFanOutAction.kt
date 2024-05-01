@@ -806,12 +806,14 @@ class TransportDocLevelMonitorFanOutAction
                 }
             }
             totalDocsQueriedStat += transformedDocs.size.toLong()
-            if ((monitor.inputs[0] as DocLevelMonitorInput).iocFieldNames.isNotEmpty())
+            if ((monitor.inputs[0] as DocLevelMonitorInput).iocFieldNames.isNotEmpty()) {
                 threatIntelDetectionService.scanDataAgainstThreatIntel(
                     monitor,
                     listOf(".opensearch-sap-threat-intel*"),
                     searchHitsBeingProcessed
                 )
+                log.error("TI_DEBUG: completed ioc scan for monitor ${monitor.id}")
+            }
         } finally {
             transformedDocs.clear()
             docsSizeOfBatchInBytes = 0
