@@ -182,6 +182,34 @@ class TriggerService(val scriptService: ScriptService) {
     }
 
     @Suppress("UNCHECKED_CAST")
+    fun runBucketLevelTriggerFromFilteredResponse(
+        monitor: Monitor,
+        trigger: BucketLevelTrigger,
+        ctx: BucketLevelTriggerExecutionContext
+    ): BucketLevelTriggerRunResult {
+        return try {
+            val parentBucketPath = trigger.bucketSelector.parentBucketPath
+            val aggregationPath = AggregationPath.parse(parentBucketPath)
+            var parentAgg = (ctx.results[0][Aggregations.AGGREGATIONS_FIELD] as HashMap<*, *>)
+            aggregationPath.pathElementsAsStringList.forEach { subAgg ->
+                parentAgg = (parentAgg[subAgg] as HashMap<*, *>)
+            }
+            val buckets = parentAgg[Aggregation.CommonFields.BUCKETS.preferredName] as List<*>
+            val selectedBuckets = mutableMapOf<String, AggregationResultBucket>()
+            for (bucket in buckets) {
+                val bucketDict = bucket as Map<String, Any>
+                val bucketKeyValuesList = getBucketKeyValuesList(bucketDict)
+                val aggResultBucket = AggregationResultBucket(parentBucketPath, bucketKeyValuesList, bucketDict)
+                selectedBuckets[aggResultBucket.getBucketKeysHash()] = aggResultBucket
+            }
+            BucketLevelTriggerRunResult(trigger.name, null, selectedBuckets)
+        } catch (e: Exception) {
+            logger.info("Error running trigger [${trigger.id}] for monitor [${monitor.id}]", e)
+            BucketLevelTriggerRunResult(trigger.name, e, emptyMap())
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
     fun runBucketLevelTrigger(
         monitor: Monitor,
         trigger: BucketLevelTrigger,
