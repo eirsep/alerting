@@ -17,6 +17,9 @@ import org.opensearch.search.aggregations.bucket.composite.CompositeAggregationB
 import org.opensearch.search.aggregations.bucket.composite.TermsValuesSourceBuilder
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder
 import org.opensearch.search.builder.SearchSourceBuilder
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 /**
  * Integration tests for bucket-level trigger evaluation with the multi-tenant trigger eval flag enabled.
@@ -219,6 +222,55 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
             val buckets2 = triggerResults.objectMap(trigger2.id)["agg_result_buckets"] as Map<String, Any>
             assertEquals("Trigger 1 should match both buckets", 2, buckets1.size)
             assertEquals("Trigger 2 should match one bucket", 1, buckets2.size)
+        } finally {
+            disableRemoteTriggerEval()
+        }
+    }
+
+    fun `test multi tenant bucket trigger with painless script in query`() {
+        enableRemoteTriggerEval()
+        try {
+            val testIndex = createTestIndex(
+                randomAlphaOfLength(10).lowercase(),
+                """
+                    "properties": {
+                        "test_strict_date_time": { "type": "date", "format": "strict_date_time" },
+                        "test_field": { "type": "keyword" },
+                        "value": { "type": "integer" }
+                    }
+                """
+            )
+            val twoMinsAgo = ZonedDateTime.now().minus(2, ChronoUnit.MINUTES).truncatedTo(ChronoUnit.MILLIS)
+            val testTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(twoMinsAgo)
+            indexDoc(testIndex, "1", """{ "test_strict_date_time": "$testTime", "test_field": "a", "value": 10 }""")
+            indexDoc(testIndex, "2", """{ "test_strict_date_time": "$testTime", "test_field": "a", "value": 20 }""")
+            indexDoc(testIndex, "3", """{ "test_strict_date_time": "$testTime", "test_field": "b", "value": 5 }""")
+
+            // Query uses a Painless script filter: only docs where value > 8
+            val query = QueryBuilders.boolQuery()
+                .must(
+                    QueryBuilders.rangeQuery("test_strict_date_time")
+                        .gt("{{period_end}}||-10d").lte("{{period_end}}").format("epoch_millis")
+                )
+                .filter(QueryBuilders.scriptQuery(Script("doc['value'].value > 8")))
+            val compositeSources = listOf(TermsValuesSourceBuilder("test_field").field("test_field"))
+            val compositeAgg = CompositeAggregationBuilder("composite_agg", compositeSources)
+            val input = SearchInput(
+                indices = listOf(testIndex),
+                query = SearchSourceBuilder().size(0).query(query).aggregation(compositeAgg)
+            )
+            // Only bucket "a" survives the script filter (values 10, 20); "b" (value 5) is excluded
+            val trigger = buildTrigger(script = "params.docCount > 0")
+            val monitor = createMonitor(
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger))
+            )
+
+            val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val output = entityAsMap(response)
+            val triggerResult = output.objectMap("trigger_results").objectMap(trigger.id)
+            @Suppress("UNCHECKED_CAST")
+            val buckets = triggerResult["agg_result_buckets"] as Map<String, Any>
+            assertEquals("Only bucket 'a' should survive the Painless script filter", 1, buckets.size)
         } finally {
             disableRemoteTriggerEval()
         }
