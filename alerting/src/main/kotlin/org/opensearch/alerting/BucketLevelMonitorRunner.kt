@@ -142,7 +142,8 @@ object BucketLevelMonitorRunner : MonitorRunner() {
                     periodStart,
                     periodEnd,
                     monitorResult.inputResults,
-                    workflowRunContext
+                    workflowRunContext,
+                    useStandardBucketSelector = monitorCtx.multiTenantTriggerEvalEnabled
                 )
                 if (firstIteration) {
                     firstPageOfInputResults = inputResults
@@ -161,7 +162,11 @@ object BucketLevelMonitorRunner : MonitorRunner() {
                     clusterSettings = monitorCtx.clusterService!!.clusterSettings
                 )
                 triggerContexts[trigger.id] = triggerCtx
-                val triggerResult = monitorCtx.triggerService!!.runBucketLevelTrigger(monitor, trigger, triggerCtx)
+                val triggerResult = if (monitorCtx.multiTenantTriggerEvalEnabled) {
+                    monitorCtx.triggerService!!.runBucketLevelTriggerFromFilteredResponse(monitor, trigger, triggerCtx)
+                } else {
+                    monitorCtx.triggerService!!.runBucketLevelTrigger(monitor, trigger, triggerCtx)
+                }
                 triggerResults[trigger.id] = triggerResult.getCombinedTriggerRunResult(triggerResults[trigger.id])
 
                 /*
