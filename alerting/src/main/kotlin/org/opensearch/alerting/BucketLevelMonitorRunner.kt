@@ -143,7 +143,7 @@ object BucketLevelMonitorRunner : MonitorRunner() {
                     periodEnd,
                     monitorResult.inputResults,
                     workflowRunContext,
-                    useStandardBucketSelector = monitorCtx.multiTenantTriggerEvalEnabled
+                    skipAllBucketSelectorInjection = monitorCtx.multiTenantTriggerEvalEnabled
                 )
                 if (firstIteration) {
                     firstPageOfInputResults = inputResults
@@ -155,12 +155,26 @@ object BucketLevelMonitorRunner : MonitorRunner() {
             for (trigger in monitor.triggers) {
                 // The currentAlerts map is formed by iterating over the Monitor's Triggers as keys so null should not be returned here
                 val currentAlertsForTrigger = currentAlerts[trigger]!!
-                val triggerCtx = BucketLevelTriggerExecutionContext(
-                    monitor,
-                    trigger as BucketLevelTrigger,
-                    monitorResult,
-                    clusterSettings = monitorCtx.clusterService!!.clusterSettings
-                )
+                val triggerCtx = if (monitorCtx.multiTenantTriggerEvalEnabled) {
+                    // Per-trigger query: send a separate search with only this trigger's bucket_selector
+                    // so multiple triggers evaluate independently (standard bucket_selector removes
+                    // non-matching buckets, so sharing a query would produce the intersection).
+                    // Pass the same prevResult so pagination (afterKey) is consistent with the base query.
+                    val perTriggerResults = monitorCtx.inputService!!.collectInputResultsForTrigger(
+                        monitor, trigger as BucketLevelTrigger, periodStart, periodEnd,
+                        null, workflowRunContext
+                    )
+                    val perTriggerMonitorResult = monitorResult.copy(inputResults = perTriggerResults)
+                    BucketLevelTriggerExecutionContext(
+                        monitor, trigger, perTriggerMonitorResult,
+                        clusterSettings = monitorCtx.clusterService!!.clusterSettings
+                    )
+                } else {
+                    BucketLevelTriggerExecutionContext(
+                        monitor, trigger as BucketLevelTrigger, monitorResult,
+                        clusterSettings = monitorCtx.clusterService!!.clusterSettings
+                    )
+                }
                 triggerContexts[trigger.id] = triggerCtx
                 val triggerResult = if (monitorCtx.multiTenantTriggerEvalEnabled) {
                     monitorCtx.triggerService!!.runBucketLevelTriggerFromFilteredResponse(monitor, trigger, triggerCtx)
@@ -239,7 +253,7 @@ object BucketLevelMonitorRunner : MonitorRunner() {
                 nextAlerts[trigger.id]?.get(AlertCategory.DEDUPED)?.addAll(dedupedAlerts)
                 nextAlerts[trigger.id]?.get(AlertCategory.NEW)?.addAll(newAlerts)
             }
-        } while (monitorResult.inputResults.afterKeysPresent())
+        } while (!monitorCtx.multiTenantTriggerEvalEnabled && monitorResult.inputResults.afterKeysPresent())
 
         // The completed Alerts are whatever are left in the currentAlerts.
         // However, this operation will only be done if there was no trigger error, since otherwise the nextAlerts were not collected

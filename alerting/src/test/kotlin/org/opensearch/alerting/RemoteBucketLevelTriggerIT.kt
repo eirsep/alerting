@@ -202,11 +202,9 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
             insertSampleTimeSerializedData(testIndex, listOf("test_value_1", "test_value_1", "test_value_2"))
 
             val input = buildCompositeInput(testIndex)
-            // Both triggers use the same threshold so they don't interfere with each other.
-            // Standard bucket_selector removes non-matching buckets, so multiple selectors
-            // on the same parent agg produce the intersection of their results.
-            val trigger1 = buildTrigger(script = "params.docCount > 0")
-            val trigger2 = buildTrigger(script = "params.docCount > 0")
+            // Different thresholds — each trigger evaluates independently via separate queries
+            val trigger1 = buildTrigger(script = "params.docCount > 0") // both buckets match
+            val trigger2 = buildTrigger(script = "params.docCount > 1") // only test_value_1 matches
             val monitor = createMonitor(
                 randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger1, trigger2))
             )
@@ -220,7 +218,7 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
             @Suppress("UNCHECKED_CAST")
             val buckets2 = triggerResults.objectMap(trigger2.id)["agg_result_buckets"] as Map<String, Any>
             assertEquals("Trigger 1 should match both buckets", 2, buckets1.size)
-            assertEquals("Trigger 2 should match both buckets", 2, buckets2.size)
+            assertEquals("Trigger 2 should match one bucket", 1, buckets2.size)
         } finally {
             disableRemoteTriggerEval()
         }
