@@ -12,6 +12,7 @@ import org.opensearch.alerting.script.ChainedAlertTriggerExecutionContext
 import org.opensearch.alerting.script.QueryLevelTriggerExecutionContext
 import org.opensearch.alerting.script.TriggerScript
 import org.opensearch.alerting.triggercondition.parsers.TriggerExpressionParser
+import org.opensearch.alerting.util.BucketKeyFilter
 import org.opensearch.alerting.util.CrossClusterMonitorUtils
 import org.opensearch.alerting.util.getBucketKeysHash
 import org.opensearch.cluster.service.ClusterService
@@ -202,7 +203,8 @@ class TriggerService(val scriptService: ScriptService) {
                 val aggResultBucket = AggregationResultBucket(parentBucketPath, bucketKeyValuesList, bucketDict)
                 selectedBuckets[aggResultBucket.getBucketKeysHash()] = aggResultBucket
             }
-            BucketLevelTriggerRunResult(trigger.name, null, selectedBuckets)
+            val filteredBuckets = BucketKeyFilter.filterBuckets(selectedBuckets, trigger.bucketSelector.filter)
+            BucketLevelTriggerRunResult(trigger.name, null, filteredBuckets)
         } catch (e: Exception) {
             logger.info("Error running trigger [${trigger.id}] for monitor [${monitor.id}]", e)
             BucketLevelTriggerRunResult(trigger.name, e, emptyMap())

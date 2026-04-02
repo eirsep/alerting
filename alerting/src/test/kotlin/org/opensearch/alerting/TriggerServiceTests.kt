@@ -13,6 +13,7 @@ import org.opensearch.common.settings.ClusterSettings
 import org.opensearch.common.settings.Setting
 import org.opensearch.common.settings.Settings
 import org.opensearch.common.xcontent.XContentType
+import org.opensearch.commons.alerting.aggregation.bucketselectorext.BucketSelectorExtAggregationBuilder
 import org.opensearch.commons.alerting.model.BucketLevelTriggerRunResult
 import org.opensearch.commons.alerting.model.InputRunResults
 import org.opensearch.commons.alerting.model.MonitorRunResult
@@ -268,10 +269,12 @@ class TriggerServiceTests : OpenSearchTestCase() {
     }
 
     fun `test run bucket level trigger from filtered response with string keys`() {
-        val bucketSelectorExtAggregationBuilder = randomBucketSelectorExtAggregationBuilder(
-            bucketsPathsMap = mutableMapOf("_count" to "_count"),
-            script = randomScript(source = "params._count > 1"),
-            parentBucketPath = "status_code"
+        val bucketSelectorExtAggregationBuilder = BucketSelectorExtAggregationBuilder(
+            "test_trigger",
+            mutableMapOf("_count" to "_count"),
+            randomScript(source = "params._count > 1"),
+            "status_code",
+            null
         )
         val trigger = randomBucketLevelTrigger(bucketSelector = bucketSelectorExtAggregationBuilder)
         val monitor = randomBucketLevelMonitor(triggers = listOf(trigger))
@@ -306,10 +309,12 @@ class TriggerServiceTests : OpenSearchTestCase() {
     }
 
     fun `test run bucket level trigger from filtered response with int keys`() {
-        val bucketSelectorExtAggregationBuilder = randomBucketSelectorExtAggregationBuilder(
-            bucketsPathsMap = mutableMapOf("_count" to "_count"),
-            script = randomScript(source = "params._count > 0"),
-            parentBucketPath = "status_code"
+        val bucketSelectorExtAggregationBuilder = BucketSelectorExtAggregationBuilder(
+            "test_trigger",
+            mutableMapOf("_count" to "_count"),
+            randomScript(source = "params._count > 0"),
+            "status_code",
+            null
         )
         val trigger = randomBucketLevelTrigger(bucketSelector = bucketSelectorExtAggregationBuilder)
         val monitor = randomBucketLevelMonitor(triggers = listOf(trigger))
@@ -342,10 +347,12 @@ class TriggerServiceTests : OpenSearchTestCase() {
     }
 
     fun `test run bucket level trigger from filtered response with composite map keys`() {
-        val bucketSelectorExtAggregationBuilder = randomBucketSelectorExtAggregationBuilder(
-            bucketsPathsMap = mutableMapOf("_count" to "_count"),
-            script = randomScript(source = "params._count > 1"),
-            parentBucketPath = "composite_agg"
+        val bucketSelectorExtAggregationBuilder = BucketSelectorExtAggregationBuilder(
+            "test_trigger",
+            mutableMapOf("_count" to "_count"),
+            randomScript(source = "params._count > 1"),
+            "composite_agg",
+            null
         )
         val trigger = randomBucketLevelTrigger(bucketSelector = bucketSelectorExtAggregationBuilder)
         val monitor = randomBucketLevelMonitor(triggers = listOf(trigger))
@@ -379,10 +386,12 @@ class TriggerServiceTests : OpenSearchTestCase() {
     }
 
     fun `test run bucket level trigger from filtered response with empty buckets`() {
-        val bucketSelectorExtAggregationBuilder = randomBucketSelectorExtAggregationBuilder(
-            bucketsPathsMap = mutableMapOf("_count" to "_count"),
-            script = randomScript(source = "params._count > 100"),
-            parentBucketPath = "status_code"
+        val bucketSelectorExtAggregationBuilder = BucketSelectorExtAggregationBuilder(
+            "test_trigger",
+            mutableMapOf("_count" to "_count"),
+            randomScript(source = "params._count > 100"),
+            "status_code",
+            null
         )
         val trigger = randomBucketLevelTrigger(bucketSelector = bucketSelectorExtAggregationBuilder)
         val monitor = randomBucketLevelMonitor(triggers = listOf(trigger))
@@ -410,10 +419,12 @@ class TriggerServiceTests : OpenSearchTestCase() {
     }
 
     fun `test run bucket level trigger from filtered response with nested parent path`() {
-        val bucketSelectorExtAggregationBuilder = randomBucketSelectorExtAggregationBuilder(
-            bucketsPathsMap = mutableMapOf("_count" to "_count"),
-            script = randomScript(source = "params._count > 0"),
-            parentBucketPath = "outer>inner"
+        val bucketSelectorExtAggregationBuilder = BucketSelectorExtAggregationBuilder(
+            "test_trigger",
+            mutableMapOf("_count" to "_count"),
+            randomScript(source = "params._count > 0"),
+            "outer>inner",
+            null
         )
         val trigger = randomBucketLevelTrigger(bucketSelector = bucketSelectorExtAggregationBuilder)
         val monitor = randomBucketLevelMonitor(triggers = listOf(trigger))
