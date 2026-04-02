@@ -137,6 +137,46 @@ class RemoteBucketLevelTriggerRegressionIT : AlertingRestTestCase() {
         }
     }
 
+    fun `test bucket level trigger toggle flag with multiple triggers`() {
+        try {
+            val testIndex = createTestIndex()
+            insertSampleTimeSerializedData(testIndex, listOf("test_value_1", "test_value_1", "test_value_2"))
+
+            val input = buildCompositeInput(testIndex)
+            val trigger1 = buildTrigger(script = "params.docCount > 0") // both buckets
+            val trigger2 = buildTrigger(script = "params.docCount > 1") // only test_value_1
+            val monitor = createMonitor(
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger1, trigger2))
+            )
+
+            // Execute with flag=false (BucketSelectorExt path)
+            client().updateSettings(SETTING_KEY, false)
+            val response1 = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val output1 = entityAsMap(response1)
+            val results1 = output1.objectMap("trigger_results")
+            @Suppress("UNCHECKED_CAST")
+            val buckets1t1 = results1.objectMap(trigger1.id)["agg_result_buckets"] as Map<String, Any>
+            @Suppress("UNCHECKED_CAST")
+            val buckets1t2 = results1.objectMap(trigger2.id)["agg_result_buckets"] as Map<String, Any>
+            assertEquals("Flag off: trigger1 should match 2 buckets", 2, buckets1t1.size)
+            assertEquals("Flag off: trigger2 should match 1 bucket", 1, buckets1t2.size)
+
+            // Toggle to true (standard bucket_selector path)
+            client().updateSettings(SETTING_KEY, true)
+            val response2 = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val output2 = entityAsMap(response2)
+            val results2 = output2.objectMap("trigger_results")
+            @Suppress("UNCHECKED_CAST")
+            val buckets2t1 = results2.objectMap(trigger1.id)["agg_result_buckets"] as Map<String, Any>
+            @Suppress("UNCHECKED_CAST")
+            val buckets2t2 = results2.objectMap(trigger2.id)["agg_result_buckets"] as Map<String, Any>
+            assertEquals("Flag on: trigger1 should match 2 buckets", 2, buckets2t1.size)
+            assertEquals("Flag on: trigger2 should match 1 bucket", 1, buckets2t2.size)
+        } finally {
+            client().updateSettings(SETTING_KEY, false)
+        }
+    }
+
     private fun getClusterSettings(): Map<String, String>? {
         val response = client().performRequest(org.opensearch.client.Request("GET", "/_cluster/settings?flat_settings=true"))
         @Suppress("UNCHECKED_CAST")
