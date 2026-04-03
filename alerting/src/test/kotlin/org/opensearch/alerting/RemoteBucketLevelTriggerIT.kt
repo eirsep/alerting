@@ -8,6 +8,7 @@ package org.opensearch.alerting
 import org.opensearch.alerting.alerts.AlertIndices
 import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.commons.alerting.aggregation.bucketselectorext.BucketSelectorExtAggregationBuilder
+import org.opensearch.commons.alerting.aggregation.bucketselectorext.BucketSelectorExtFilter
 import org.opensearch.commons.alerting.model.Alert.State.ACTIVE
 import org.opensearch.commons.alerting.model.Alert.State.COMPLETED
 import org.opensearch.commons.alerting.model.SearchInput
@@ -15,6 +16,7 @@ import org.opensearch.index.query.QueryBuilders
 import org.opensearch.script.Script
 import org.opensearch.search.aggregations.bucket.composite.CompositeAggregationBuilder
 import org.opensearch.search.aggregations.bucket.composite.TermsValuesSourceBuilder
+import org.opensearch.search.aggregations.bucket.terms.IncludeExclude
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder
 import org.opensearch.search.builder.SearchSourceBuilder
 import java.time.ZonedDateTime
@@ -271,6 +273,119 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
             @Suppress("UNCHECKED_CAST")
             val buckets = triggerResult["agg_result_buckets"] as Map<String, Any>
             assertEquals("Only bucket 'a' should survive the Painless script filter", 1, buckets.size)
+        } finally {
+            disableRemoteTriggerEval()
+        }
+    }
+
+    fun `test multi tenant bucket trigger nested parent path`() {
+        enableRemoteTriggerEval()
+        try {
+            val testIndex = createTestIndex(
+                randomAlphaOfLength(10).lowercase(),
+                """
+                    "properties": {
+                        "test_strict_date_time": { "type": "date", "format": "strict_date_time" },
+                        "host": { "type": "keyword" },
+                        "status": { "type": "keyword" }
+                    }
+                """
+            )
+            val twoMinsAgo = ZonedDateTime.now().minus(2, ChronoUnit.MINUTES).truncatedTo(ChronoUnit.MILLIS)
+            val testTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(twoMinsAgo)
+            // host_a: 3 docs (status 200, 200, 500), host_b: 1 doc (status 200)
+            indexDoc(testIndex, "1", """{ "test_strict_date_time": "$testTime", "host": "host_a", "status": "200" }""")
+            indexDoc(testIndex, "2", """{ "test_strict_date_time": "$testTime", "host": "host_a", "status": "200" }""")
+            indexDoc(testIndex, "3", """{ "test_strict_date_time": "$testTime", "host": "host_a", "status": "500" }""")
+            indexDoc(testIndex, "4", """{ "test_strict_date_time": "$testTime", "host": "host_b", "status": "200" }""")
+
+            val query = QueryBuilders.rangeQuery("test_strict_date_time")
+                .gt("{{period_end}}||-10d")
+                .lte("{{period_end}}")
+                .format("epoch_millis")
+            // Top-level composite agg on host — this is the parentBucketPath target
+            val compositeSources = listOf(TermsValuesSourceBuilder("host").field("host"))
+            // Nested sub-agg: terms on status under composite
+            val statusAgg = TermsAggregationBuilder("status_breakdown").field("status")
+            val compositeAgg = CompositeAggregationBuilder("composite_agg", compositeSources)
+                .subAggregation(statusAgg)
+            val input = SearchInput(
+                indices = listOf(testIndex),
+                query = SearchSourceBuilder().size(0).query(query).aggregation(compositeAgg)
+            )
+
+            // Trigger A: host_a(3 docs) matches, host_b(1 doc) doesn't
+            val triggerA = buildTrigger(parentBucketPath = "composite_agg", script = "params.docCount > 1")
+            // Trigger B: both hosts match
+            val triggerB = buildTrigger(parentBucketPath = "composite_agg", script = "params.docCount > 0")
+            val monitor = createMonitor(
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(triggerA, triggerB))
+            )
+
+            val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val output = entityAsMap(response)
+            val triggerResults = output.objectMap("trigger_results")
+
+            @Suppress("UNCHECKED_CAST")
+            val bucketsA = triggerResults.objectMap(triggerA.id)["agg_result_buckets"] as Map<String, Any>
+            @Suppress("UNCHECKED_CAST")
+            val bucketsB = triggerResults.objectMap(triggerB.id)["agg_result_buckets"] as Map<String, Any>
+            assertEquals("Trigger A should match only host_a", 1, bucketsA.size)
+            assertEquals("Trigger B should match both hosts", 2, bucketsB.size)
+        } finally {
+            disableRemoteTriggerEval()
+        }
+    }
+
+    fun `test multi tenant bucket trigger include exclude filter`() {
+        enableRemoteTriggerEval()
+        try {
+            val testIndex = createTestIndex()
+            // 4 buckets: test_value_1(2 docs), test_value_2(1), test_value_3(1), test_value_4(1)
+            insertSampleTimeSerializedData(
+                testIndex,
+                listOf("test_value_1", "test_value_1", "test_value_2", "test_value_3", "test_value_4")
+            )
+
+            val input = buildCompositeInput(testIndex)
+            // Trigger A: all buckets match (docCount > 0), but include filter limits to test_value_1 and test_value_2
+            var triggerA = randomBucketLevelTrigger()
+            triggerA = triggerA.copy(
+                bucketSelector = BucketSelectorExtAggregationBuilder(
+                    name = triggerA.id,
+                    bucketsPathsMap = mapOf("docCount" to "_count"),
+                    script = Script("params.docCount > 0"),
+                    parentBucketPath = "composite_agg",
+                    filter = BucketSelectorExtFilter(IncludeExclude("test_value_[12]", null))
+                )
+            )
+            // Trigger B: all buckets match, exclude filter removes test_value_1
+            var triggerB = randomBucketLevelTrigger()
+            triggerB = triggerB.copy(
+                bucketSelector = BucketSelectorExtAggregationBuilder(
+                    name = triggerB.id,
+                    bucketsPathsMap = mapOf("docCount" to "_count"),
+                    script = Script("params.docCount > 0"),
+                    parentBucketPath = "composite_agg",
+                    filter = BucketSelectorExtFilter(IncludeExclude(null, "test_value_1"))
+                )
+            )
+            val monitor = createMonitor(
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(triggerA, triggerB))
+            )
+
+            val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val output = entityAsMap(response)
+            val triggerResults = output.objectMap("trigger_results")
+
+            @Suppress("UNCHECKED_CAST")
+            val bucketsA = triggerResults.objectMap(triggerA.id)["agg_result_buckets"] as Map<String, Any>
+            @Suppress("UNCHECKED_CAST")
+            val bucketsB = triggerResults.objectMap(triggerB.id)["agg_result_buckets"] as Map<String, Any>
+            // Trigger A: 4 buckets pass script, include filter keeps test_value_1 and test_value_2
+            assertEquals("Trigger A should match 2 buckets after include filter", 2, bucketsA.size)
+            // Trigger B: 4 buckets pass script, exclude filter removes test_value_1 → 3 remain
+            assertEquals("Trigger B should match 3 buckets after exclude filter", 3, bucketsB.size)
         } finally {
             disableRemoteTriggerEval()
         }
