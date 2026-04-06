@@ -391,6 +391,98 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
         }
     }
 
+    fun `test multi tenant bucket trigger input results populated without base query`() {
+        enableRemoteTriggerEval()
+        try {
+            val testIndex = createTestIndex()
+            insertSampleTimeSerializedData(testIndex, listOf("test_value_1", "test_value_1", "test_value_2"))
+
+            val input = buildCompositeInput(testIndex)
+            val trigger = buildTrigger(script = "params.docCount > 0")
+            val monitor = createMonitor(randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger)))
+
+            val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val output = entityAsMap(response)
+
+            // Verify input_results is populated even though the base query is skipped
+            @Suppress("UNCHECKED_CAST")
+            val inputResults = output.objectMap("input_results")["results"] as List<Map<String, Any>>
+            assertTrue("input_results should not be empty", inputResults.isNotEmpty())
+            val firstResult = inputResults.first()
+            assertNotNull("Aggregations should be present", firstResult["aggregations"])
+        } finally {
+            disableRemoteTriggerEval()
+        }
+    }
+
+    fun `test multi tenant bucket trigger single trigger matches flag off`() {
+        val testIndex = createTestIndex()
+        insertSampleTimeSerializedData(testIndex, listOf("test_value_1", "test_value_1", "test_value_2"))
+
+        val input = buildCompositeInput(testIndex)
+        val trigger = buildTrigger(script = "params.docCount > 1")
+        val monitor = createMonitor(randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger)))
+
+        // Execute with flag off
+        client().updateSettings(SETTING_KEY, false)
+        val responseOff = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+        val outputOff = entityAsMap(responseOff)
+        @Suppress("UNCHECKED_CAST")
+        val bucketsOff = outputOff.objectMap("trigger_results").objectMap(trigger.id)["agg_result_buckets"] as Map<String, Any>
+
+        // Execute with flag on
+        enableRemoteTriggerEval()
+        try {
+            val responseOn = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val outputOn = entityAsMap(responseOn)
+            @Suppress("UNCHECKED_CAST")
+            val bucketsOn = outputOn.objectMap("trigger_results").objectMap(trigger.id)["agg_result_buckets"] as Map<String, Any>
+
+            assertEquals("Single trigger should produce same bucket count", bucketsOff.size, bucketsOn.size)
+            assertEquals("Only test_value_1 should match", 1, bucketsOn.size)
+        } finally {
+            disableRemoteTriggerEval()
+        }
+    }
+
+    fun `test multi tenant bucket trigger alert lifecycle without base query`() {
+        enableRemoteTriggerEval()
+        try {
+            val testIndex = createTestIndex()
+            insertSampleTimeSerializedData(testIndex, listOf("test_value_1", "test_value_1", "test_value_2"))
+
+            val input = buildCompositeInput(testIndex)
+            val trigger1 = buildTrigger(script = "params.docCount > 0") // both buckets
+            val trigger2 = buildTrigger(script = "params.docCount > 1") // only test_value_1
+            val monitor = createMonitor(
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger1, trigger2))
+            )
+
+            // First execution — alerts created
+            executeMonitor(monitor.id)
+            var alerts = searchAlerts(monitor)
+            val trigger1Alerts = alerts.filter { it.triggerId == trigger1.id }
+            val trigger2Alerts = alerts.filter { it.triggerId == trigger2.id }
+            assertEquals("Trigger 1 should have 2 alerts", 2, trigger1Alerts.size)
+            assertEquals("Trigger 2 should have 1 alert", 1, trigger2Alerts.size)
+
+            // Delete docs for test_value_1
+            deleteDataWithDocIds(testIndex, listOf("1", "2"))
+
+            // Second execution — trigger1: test_value_1 completed, test_value_2 active; trigger2: test_value_1 completed
+            executeMonitor(monitor.id)
+            alerts = searchAlerts(monitor, AlertIndices.ALL_ALERT_INDEX_PATTERN)
+            val t1Active = alerts.filter { it.triggerId == trigger1.id && it.state == ACTIVE }
+            val t1Completed = alerts.filter { it.triggerId == trigger1.id && it.state == COMPLETED }
+            val t2Completed = alerts.filter { it.triggerId == trigger2.id && it.state == COMPLETED }
+            assertEquals("Trigger 1 should have 1 active alert", 1, t1Active.size)
+            assertEquals("Trigger 1 should have 1 completed alert", 1, t1Completed.size)
+            assertEquals("Trigger 2 should have 1 completed alert", 1, t2Completed.size)
+        } finally {
+            disableRemoteTriggerEval()
+        }
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun Map<String, Any>.objectMap(key: String): Map<String, Map<String, Any>> {
         return this[key] as Map<String, Map<String, Any>>
