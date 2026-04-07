@@ -7,6 +7,7 @@ package org.opensearch.alerting
 
 import org.opensearch.alerting.alerts.AlertIndices
 import org.opensearch.alerting.settings.AlertingSettings
+import org.opensearch.client.ResponseException
 import org.opensearch.commons.alerting.aggregation.bucketselectorext.BucketSelectorExtAggregationBuilder
 import org.opensearch.commons.alerting.aggregation.bucketselectorext.BucketSelectorExtFilter
 import org.opensearch.commons.alerting.model.Alert.State.ACTIVE
@@ -200,30 +201,21 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
         }
     }
 
-    fun `test multi tenant bucket trigger multiple triggers`() {
+    fun `test multi tenant bucket trigger rejects multiple triggers`() {
         enableRemoteTriggerEval()
         try {
             val testIndex = createTestIndex()
-            insertSampleTimeSerializedData(testIndex, listOf("test_value_1", "test_value_1", "test_value_2"))
-
             val input = buildCompositeInput(testIndex)
-            // Different thresholds — each trigger evaluates independently via separate queries
-            val trigger1 = buildTrigger(script = "params.docCount > 0") // both buckets match
-            val trigger2 = buildTrigger(script = "params.docCount > 1") // only test_value_1 matches
-            val monitor = createMonitor(
-                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger1, trigger2))
-            )
-
-            val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
-            val output = entityAsMap(response)
-            val triggerResults = output.objectMap("trigger_results")
-
-            @Suppress("UNCHECKED_CAST")
-            val buckets1 = triggerResults.objectMap(trigger1.id)["agg_result_buckets"] as Map<String, Any>
-            @Suppress("UNCHECKED_CAST")
-            val buckets2 = triggerResults.objectMap(trigger2.id)["agg_result_buckets"] as Map<String, Any>
-            assertEquals("Trigger 1 should match both buckets", 2, buckets1.size)
-            assertEquals("Trigger 2 should match one bucket", 1, buckets2.size)
+            val trigger1 = buildTrigger(script = "params.docCount > 0")
+            val trigger2 = buildTrigger(script = "params.docCount > 1")
+            try {
+                createMonitor(
+                    randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger1, trigger2))
+                )
+                fail("Expected monitor creation to fail with 2 triggers when flag is on")
+            } catch (e: ResponseException) {
+                assertTrue(e.message!!.contains("only support 1 trigger"))
+            }
         } finally {
             disableRemoteTriggerEval()
         }
@@ -314,12 +306,10 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
                 query = SearchSourceBuilder().size(0).query(query).aggregation(compositeAgg)
             )
 
-            // Trigger A: host_a(3 docs) matches, host_b(1 doc) doesn't
-            val triggerA = buildTrigger(parentBucketPath = "composite_agg", script = "params.docCount > 1")
-            // Trigger B: both hosts match
-            val triggerB = buildTrigger(parentBucketPath = "composite_agg", script = "params.docCount > 0")
+            // Trigger: host_a(3 docs) matches, host_b(1 doc) doesn't
+            val trigger = buildTrigger(parentBucketPath = "composite_agg", script = "params.docCount > 1")
             val monitor = createMonitor(
-                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(triggerA, triggerB))
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger))
             )
 
             val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
@@ -327,11 +317,8 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
             val triggerResults = output.objectMap("trigger_results")
 
             @Suppress("UNCHECKED_CAST")
-            val bucketsA = triggerResults.objectMap(triggerA.id)["agg_result_buckets"] as Map<String, Any>
-            @Suppress("UNCHECKED_CAST")
-            val bucketsB = triggerResults.objectMap(triggerB.id)["agg_result_buckets"] as Map<String, Any>
-            assertEquals("Trigger A should match only host_a", 1, bucketsA.size)
-            assertEquals("Trigger B should match both hosts", 2, bucketsB.size)
+            val buckets = triggerResults.objectMap(trigger.id)["agg_result_buckets"] as Map<String, Any>
+            assertEquals("Only host_a should match", 1, buckets.size)
         } finally {
             disableRemoteTriggerEval()
         }
@@ -348,30 +335,19 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
             )
 
             val input = buildCompositeInput(testIndex)
-            // Trigger A: all buckets match (docCount > 0), but include filter limits to test_value_1 and test_value_2
-            var triggerA = randomBucketLevelTrigger()
-            triggerA = triggerA.copy(
+            // Include filter limits to test_value_1 and test_value_2
+            var trigger = randomBucketLevelTrigger()
+            trigger = trigger.copy(
                 bucketSelector = BucketSelectorExtAggregationBuilder(
-                    name = triggerA.id,
+                    name = trigger.id,
                     bucketsPathsMap = mapOf("docCount" to "_count"),
                     script = Script("params.docCount > 0"),
                     parentBucketPath = "composite_agg",
                     filter = BucketSelectorExtFilter(IncludeExclude("test_value_[12]", null))
                 )
             )
-            // Trigger B: all buckets match, exclude filter removes test_value_1
-            var triggerB = randomBucketLevelTrigger()
-            triggerB = triggerB.copy(
-                bucketSelector = BucketSelectorExtAggregationBuilder(
-                    name = triggerB.id,
-                    bucketsPathsMap = mapOf("docCount" to "_count"),
-                    script = Script("params.docCount > 0"),
-                    parentBucketPath = "composite_agg",
-                    filter = BucketSelectorExtFilter(IncludeExclude(null, "test_value_1"))
-                )
-            )
             val monitor = createMonitor(
-                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(triggerA, triggerB))
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger))
             )
 
             val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
@@ -379,13 +355,47 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
             val triggerResults = output.objectMap("trigger_results")
 
             @Suppress("UNCHECKED_CAST")
-            val bucketsA = triggerResults.objectMap(triggerA.id)["agg_result_buckets"] as Map<String, Any>
+            val buckets = triggerResults.objectMap(trigger.id)["agg_result_buckets"] as Map<String, Any>
+            // 4 buckets pass script, include filter keeps test_value_1 and test_value_2
+            assertEquals("Should match 2 buckets after include filter", 2, buckets.size)
+        } finally {
+            disableRemoteTriggerEval()
+        }
+    }
+
+    fun `test multi tenant bucket trigger exclude filter`() {
+        enableRemoteTriggerEval()
+        try {
+            val testIndex = createTestIndex()
+            insertSampleTimeSerializedData(
+                testIndex,
+                listOf("test_value_1", "test_value_1", "test_value_2", "test_value_3", "test_value_4")
+            )
+
+            val input = buildCompositeInput(testIndex)
+            // Exclude filter removes test_value_1
+            var trigger = randomBucketLevelTrigger()
+            trigger = trigger.copy(
+                bucketSelector = BucketSelectorExtAggregationBuilder(
+                    name = trigger.id,
+                    bucketsPathsMap = mapOf("docCount" to "_count"),
+                    script = Script("params.docCount > 0"),
+                    parentBucketPath = "composite_agg",
+                    filter = BucketSelectorExtFilter(IncludeExclude(null, "test_value_1"))
+                )
+            )
+            val monitor = createMonitor(
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger))
+            )
+
+            val response = executeMonitor(monitor.id, params = DRYRUN_MONITOR)
+            val output = entityAsMap(response)
+            val triggerResults = output.objectMap("trigger_results")
+
             @Suppress("UNCHECKED_CAST")
-            val bucketsB = triggerResults.objectMap(triggerB.id)["agg_result_buckets"] as Map<String, Any>
-            // Trigger A: 4 buckets pass script, include filter keeps test_value_1 and test_value_2
-            assertEquals("Trigger A should match 2 buckets after include filter", 2, bucketsA.size)
-            // Trigger B: 4 buckets pass script, exclude filter removes test_value_1 → 3 remain
-            assertEquals("Trigger B should match 3 buckets after exclude filter", 3, bucketsB.size)
+            val buckets = triggerResults.objectMap(trigger.id)["agg_result_buckets"] as Map<String, Any>
+            // 4 buckets pass script, exclude filter removes test_value_1 → 3 remain
+            assertEquals("Should match 3 buckets after exclude filter", 3, buckets.size)
         } finally {
             disableRemoteTriggerEval()
         }
@@ -445,39 +455,34 @@ class RemoteBucketLevelTriggerIT : AlertingRestTestCase() {
         }
     }
 
-    fun `test multi tenant bucket trigger alert lifecycle without base query`() {
+    fun `test multi tenant bucket trigger alert lifecycle single query`() {
         enableRemoteTriggerEval()
         try {
             val testIndex = createTestIndex()
             insertSampleTimeSerializedData(testIndex, listOf("test_value_1", "test_value_1", "test_value_2"))
 
             val input = buildCompositeInput(testIndex)
-            val trigger1 = buildTrigger(script = "params.docCount > 0") // both buckets
-            val trigger2 = buildTrigger(script = "params.docCount > 1") // only test_value_1
+            val trigger = buildTrigger(script = "params.docCount > 0")
             val monitor = createMonitor(
-                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger1, trigger2))
+                randomBucketLevelMonitor(inputs = listOf(input), enabled = false, triggers = listOf(trigger))
             )
 
-            // First execution — alerts created
+            // First execution — 2 alerts created (test_value_1, test_value_2)
             executeMonitor(monitor.id)
             var alerts = searchAlerts(monitor)
-            val trigger1Alerts = alerts.filter { it.triggerId == trigger1.id }
-            val trigger2Alerts = alerts.filter { it.triggerId == trigger2.id }
-            assertEquals("Trigger 1 should have 2 alerts", 2, trigger1Alerts.size)
-            assertEquals("Trigger 2 should have 1 alert", 1, trigger2Alerts.size)
+            assertEquals("Should have 2 alerts", 2, alerts.size)
+            alerts.forEach { assertEquals(ACTIVE, it.state) }
 
             // Delete docs for test_value_1
             deleteDataWithDocIds(testIndex, listOf("1", "2"))
 
-            // Second execution — trigger1: test_value_1 completed, test_value_2 active; trigger2: test_value_1 completed
+            // Second execution — test_value_1 completed, test_value_2 still active
             executeMonitor(monitor.id)
             alerts = searchAlerts(monitor, AlertIndices.ALL_ALERT_INDEX_PATTERN)
-            val t1Active = alerts.filter { it.triggerId == trigger1.id && it.state == ACTIVE }
-            val t1Completed = alerts.filter { it.triggerId == trigger1.id && it.state == COMPLETED }
-            val t2Completed = alerts.filter { it.triggerId == trigger2.id && it.state == COMPLETED }
-            assertEquals("Trigger 1 should have 1 active alert", 1, t1Active.size)
-            assertEquals("Trigger 1 should have 1 completed alert", 1, t1Completed.size)
-            assertEquals("Trigger 2 should have 1 completed alert", 1, t2Completed.size)
+            val active = alerts.filter { it.state == ACTIVE }
+            val completed = alerts.filter { it.state == COMPLETED }
+            assertEquals("Should have 1 active alert", 1, active.size)
+            assertEquals("Should have 1 completed alert", 1, completed.size)
         } finally {
             disableRemoteTriggerEval()
         }

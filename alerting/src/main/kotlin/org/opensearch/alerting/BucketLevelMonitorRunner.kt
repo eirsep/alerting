@@ -124,61 +124,44 @@ object BucketLevelMonitorRunner : MonitorRunner() {
             //  If a setting is imposed that limits buckets that can be processed for Bucket-Level Monitors, we'd need to iterate over
             //  the buckets until we hit that threshold. In that case, we'd want to exit the execution without creating any alerts since the
             //  buckets we iterate over before hitting the limit is not deterministic. Is there a better way to fail faster in this case?
-
-            // When the flag is on, skip the base query entirely. Each trigger gets its own per-trigger
-            // query with bucket_selector injected, so the base query (which runs without any bucket_selector)
-            // would be wasted work. The first trigger's result is used to populate monitorResult for the
-            // API response and sample docs context.
-            if (!monitorCtx.multiTenantTriggerEvalEnabled) {
-                withClosableContext(
-                    InjectorContextElement(
-                        monitor.id,
-                        monitorCtx.settings!!,
-                        monitorCtx.threadPool!!.threadContext,
-                        roles,
-                        monitor.user
-                    )
-                ) {
-                    // Storing the first page of results in the case of pagination input results to prevent empty results
-                    // in the final output of monitorResult which occurs when all pages have been exhausted.
-                    // If it's favorable to return the last page, will need to check how to accomplish that with multiple aggregation paths
-                    // with different page counts.
-                    val inputResults = monitorCtx.inputService!!.collectInputResults(
-                        monitor,
-                        periodStart,
-                        periodEnd,
-                        monitorResult.inputResults,
-                        workflowRunContext
-                    )
-                    if (firstIteration) {
-                        firstPageOfInputResults = inputResults
-                        firstIteration = false
-                    }
-                    monitorResult = monitorResult.copy(inputResults = inputResults)
+            withClosableContext(
+                InjectorContextElement(
+                    monitor.id,
+                    monitorCtx.settings!!,
+                    monitorCtx.threadPool!!.threadContext,
+                    roles,
+                    monitor.user
+                )
+            ) {
+                // Storing the first page of results in the case of pagination input results to prevent empty results
+                // in the final output of monitorResult which occurs when all pages have been exhausted.
+                // If it's favorable to return the last page, will need to check how to accomplish that with multiple aggregation paths
+                // with different page counts.
+                //
+                // When the flag is on, bucket-level monitors are limited to 1 trigger. The standard
+                // bucket_selector is injected directly into the query so a single search call performs
+                // both data collection and trigger evaluation — no separate per-trigger queries needed.
+                val inputResults = monitorCtx.inputService!!.collectInputResults(
+                    monitor,
+                    periodStart,
+                    periodEnd,
+                    monitorResult.inputResults,
+                    workflowRunContext,
+                    useStandardBucketSelector = monitorCtx.multiTenantTriggerEvalEnabled
+                )
+                if (firstIteration) {
+                    firstPageOfInputResults = inputResults
+                    firstIteration = false
                 }
+                monitorResult = monitorResult.copy(inputResults = inputResults)
             }
 
             for (trigger in monitor.triggers) {
                 // The currentAlerts map is formed by iterating over the Monitor's Triggers as keys so null should not be returned here
                 val currentAlertsForTrigger = currentAlerts[trigger]!!
                 val triggerCtx = if (monitorCtx.multiTenantTriggerEvalEnabled) {
-                    // Per-trigger query: send a separate search with only this trigger's bucket_selector
-                    // so multiple triggers evaluate independently (standard bucket_selector removes
-                    // non-matching buckets, so sharing a query would produce the intersection).
-                    val perTriggerResults = monitorCtx.inputService!!.collectInputResultsForTrigger(
-                        monitor, trigger as BucketLevelTrigger, periodStart, periodEnd,
-                        null, workflowRunContext
-                    )
-                    // Use the first trigger's result to populate monitorResult for the API response
-                    // and downstream sample docs search context.
-                    if (firstIteration) {
-                        firstPageOfInputResults = perTriggerResults
-                        monitorResult = monitorResult.copy(inputResults = perTriggerResults)
-                        firstIteration = false
-                    }
-                    val perTriggerMonitorResult = monitorResult.copy(inputResults = perTriggerResults)
                     BucketLevelTriggerExecutionContext(
-                        monitor, trigger, perTriggerMonitorResult,
+                        monitor, trigger as BucketLevelTrigger, monitorResult,
                         clusterSettings = monitorCtx.clusterService!!.clusterSettings
                     )
                 } else {
@@ -265,7 +248,7 @@ object BucketLevelMonitorRunner : MonitorRunner() {
                 nextAlerts[trigger.id]?.get(AlertCategory.DEDUPED)?.addAll(dedupedAlerts)
                 nextAlerts[trigger.id]?.get(AlertCategory.NEW)?.addAll(newAlerts)
             }
-        } while (!monitorCtx.multiTenantTriggerEvalEnabled && monitorResult.inputResults.afterKeysPresent())
+        } while (monitorResult.inputResults.afterKeysPresent())
 
         // The completed Alerts are whatever are left in the currentAlerts.
         // However, this operation will only be done if there was no trigger error, since otherwise the nextAlerts were not collected
