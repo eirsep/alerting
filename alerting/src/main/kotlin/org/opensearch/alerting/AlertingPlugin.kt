@@ -53,6 +53,8 @@ import org.opensearch.alerting.resthandler.RestSearchEmailGroupAction
 import org.opensearch.alerting.resthandler.RestSearchMonitorAction
 import org.opensearch.alerting.script.TriggerScript
 import org.opensearch.alerting.service.DeleteMonitorService
+import org.opensearch.alerting.service.JobQueueUrlsProvider
+import org.opensearch.alerting.service.MonitorJobPoller
 import org.opensearch.alerting.settings.AlertingSettings
 import org.opensearch.alerting.settings.AlertingSettings.Companion.DOC_LEVEL_MONITOR_SHARD_FETCH_SIZE
 import org.opensearch.alerting.settings.AlertingSettings.Companion.MULTI_TENANCY_ENABLED
@@ -196,6 +198,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
     lateinit var clusterService: ClusterService
     lateinit var destinationMigrationCoordinator: DestinationMigrationCoordinator
     var monitorTypeToMonitorRunners: MutableMap<String, RemoteMonitorRegistry> = mutableMapOf()
+    var jobQueueUrlsProvider: JobQueueUrlsProvider? = null
 
     override fun getRestHandlers(
         settings: Settings,
@@ -369,7 +372,16 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
 
         DeleteMonitorService.initialize(client, lockService)
 
-        return listOf(
+        val monitorJobPoller = if (MULTI_TENANCY_ENABLED.get(settings) && jobQueueUrlsProvider != null) {
+            val sqsClient = software.amazon.awssdk.services.sqs.SqsClient.builder()
+                .region(software.amazon.awssdk.regions.Region.of(REMOTE_METADATA_REGION.get(settings)))
+                .build()
+            MonitorJobPoller(jobQueueUrlsProvider!!, sqsClient, xContentRegistry, client).also { it.start() }
+        } else {
+            null
+        }
+
+        return listOfNotNull(
             sweeper,
             scheduler,
             runner,
@@ -380,7 +392,8 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
             lockService,
             alertService,
             triggerService,
-            sdkClient
+            sdkClient,
+            monitorJobPoller
         )
     }
 
@@ -517,6 +530,10 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, R
                     this.monitorTypeToMonitorRunners[monitorType] = monitorRegistry
                 }
             }
+        }
+
+        for (queueProvider in loader.loadExtensions(JobQueueUrlsProvider::class.java)) {
+            this.jobQueueUrlsProvider = queueProvider
         }
     }
 }
