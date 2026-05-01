@@ -25,6 +25,7 @@ buildscript {
         // TODO: revert to opensearch_build after alerting version bump to 3.7.0
         common_utils_version = System.getProperty("common_utils.version", "3.7.0.0-SNAPSHOT")
         kotlin_version = '2.2.0'
+        aws_sdk_version = '2.30.31'
     }
 
     repositories {
